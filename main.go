@@ -5,11 +5,12 @@ import (
 	"os"
 
 	"github.com/amine-khemissi/nstat/cmd"
+	"github.com/amine-khemissi/nstat/version"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: nstat {start [--interval N] [--window N]|stop|status|log|graph [--hours N]|-h}")
+		fmt.Fprintln(os.Stderr, "usage: nstat {start [--interval N] [--window N]|stop|status|log|graph [--hours N]|-h|-v}")
 		os.Exit(1)
 	}
 
@@ -26,11 +27,13 @@ func main() {
 		cmd.Graph(os.Args[2:])
 	case "-h", "--help", "help":
 		cmd.Help()
+	case "-v", "--version", "version":
+		fmt.Printf("nstat %s\n", version.String())
 	case "_daemon":
 		cmd.Daemon(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "\033[91munknown command: %s\033[0m\n", os.Args[1])
-		fmt.Fprintln(os.Stderr, "usage: nstat {start [--interval N] [--window N]|stop|status|log|graph [--hours N]|-h}")
+		fmt.Fprintln(os.Stderr, "usage: nstat {start [--interval N] [--window N]|stop|status|log|graph [--hours N]|-h|-v}")
 		os.Exit(1)
 	}
 }

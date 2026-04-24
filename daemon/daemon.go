@@ -125,12 +125,15 @@ func Run(cfg *config.Config) {
 	outageStart := time.Time{}
 
 	for {
-		// log rotation
+		// log + CSV rotation
 		if time.Now().After(logRotateAt) {
 			printSummary(logf, snap, cfg)
-			logf("── log rotating ─────────────────────────────────────")
+			logf("── log + CSV rotating ───────────────────────────────")
 			logF.Close()
 			rotateLogs(cfg.LogFile)
+			if err := store.RotateCSVs(cfg.Dir); err != nil {
+				// will log after reopening
+			}
 			logF = openLog(cfg.LogFile)
 			logf = func(format string, args ...any) {
 				msg := fmt.Sprintf(format, args...)

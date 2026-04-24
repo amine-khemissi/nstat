@@ -1,5 +1,10 @@
 BIN     := nstat
-LDFLAGS := -ldflags="-s -w"
+PKG     := github.com/amine-khemissi/nstat/version
+GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
+GIT_TAG    := $(shell git describe --tags --exact-match 2>/dev/null || echo "")
+GIT_DIRTY  := $(shell git diff --quiet 2>/dev/null || echo "dirty")
+VERSION_FLAGS := -X $(PKG).GitCommit=$(GIT_COMMIT) -X $(PKG).GitTag=$(GIT_TAG) -X $(PKG).GitDirty=$(GIT_DIRTY)
+LDFLAGS := -ldflags="-s -w $(VERSION_FLAGS)"
 INSTALL := $(HOME)/.local/bin/$(BIN)
 
 # Build for the current OS/arch (development)

@@ -13,16 +13,17 @@ import (
 )
 
 const (
-	svgWidth  = 1400
-	panelH    = 200
-	padTop    = 25
-	padBot    = 45
-	padLeft   = 80
-	padRight  = 30
-	plotW     = svgWidth - padLeft - padRight // 1290
-	plotH     = panelH - padTop - padBot      // 130
-	headerH   = 45
-	gridLines = 5
+	svgWidth      = 1400
+	panelH        = 200
+	padTop        = 25
+	padBot        = 45
+	padLeft       = 80
+	padRight      = 30
+	plotW         = svgWidth - padLeft - padRight // 1290
+	plotH         = panelH - padTop - padBot      // 130
+	headerH       = 45
+	gridLines     = 5
+	maxDataPoints = 2000 // max points per panel to keep SVG size reasonable
 )
 
 type Point struct {
@@ -82,6 +83,9 @@ func renderPanel(w io.Writer, p Panel, yOff int, cutoff *time.Time) {
 		}
 		data = filtered
 	}
+
+	// Sample data if too many points to avoid huge SVGs
+	data = sampleData(data, maxDataPoints)
 
 	// panel background
 	fmt.Fprintf(w, `<rect x="0" y="%d" width="%d" height="%d" fill="#181825"/>`,
@@ -286,8 +290,87 @@ var DefaultPanels = []PanelDef{
 	{"Packet Loss", "csv_packet_loss.csv", "%", 1, 5},
 	{"TCP Connect", "csv_tcp_connect.csv", "ms", 150, 150},
 	{"TCP Loss", "csv_tcp_loss.csv", "%", 1, 5},
+	{"TCP Retrans", "csv_tcp_retrans.csv", "%", 2, 5},
+	{"TCP Errors", "csv_tcp_errors.csv", "count", 1, 10},
+	{"MTU", "csv_mtu.csv", "bytes", 1400, 1200},
 	{"DNS Resolve", "csv_dns.csv", "ms", 100, 500},
 	{"DHCP Ping", "csv_dhcp.csv", "ms", 10, 50},
+}
+
+// sampleData reduces the number of points to at most maxPts using LTTB-like sampling.
+// Preserves peaks and valleys for accurate visualization.
+func sampleData(data []Point, maxPts int) []Point {
+	if len(data) <= maxPts {
+		return data
+	}
+
+	// Use largest triangle three buckets (LTTB) inspired sampling
+	// to preserve visual fidelity while reducing points
+	result := make([]Point, 0, maxPts)
+	result = append(result, data[0]) // always keep first point
+
+	bucketSize := float64(len(data)-2) / float64(maxPts-2)
+
+	for i := 1; i < maxPts-1; i++ {
+		// Calculate bucket boundaries
+		bucketStart := int(float64(i-1)*bucketSize) + 1
+		bucketEnd := int(float64(i)*bucketSize) + 1
+		if bucketEnd > len(data)-1 {
+			bucketEnd = len(data) - 1
+		}
+
+		// Find the point in this bucket that creates the largest triangle
+		// with the previous selected point and the average of the next bucket
+		nextBucketStart := bucketEnd
+		nextBucketEnd := int(float64(i+1)*bucketSize) + 1
+		if nextBucketEnd > len(data) {
+			nextBucketEnd = len(data)
+		}
+
+		// Calculate average of next bucket
+		var avgT, avgV float64
+		for j := nextBucketStart; j < nextBucketEnd; j++ {
+			avgT += float64(data[j].T.Unix())
+			avgV += data[j].V
+		}
+		nextCount := float64(nextBucketEnd - nextBucketStart)
+		if nextCount > 0 {
+			avgT /= nextCount
+			avgV /= nextCount
+		}
+
+		// Find max area point in current bucket
+		prevPt := result[len(result)-1]
+		maxArea := -1.0
+		var maxPt Point
+		for j := bucketStart; j < bucketEnd; j++ {
+			pt := data[j]
+			// Calculate triangle area
+			area := triangleArea(
+				float64(prevPt.T.Unix()), prevPt.V,
+				float64(pt.T.Unix()), pt.V,
+				avgT, avgV,
+			)
+			if area > maxArea {
+				maxArea = area
+				maxPt = pt
+			}
+		}
+		if maxArea >= 0 {
+			result = append(result, maxPt)
+		}
+	}
+
+	result = append(result, data[len(data)-1]) // always keep last point
+	return result
+}
+
+func triangleArea(x1, y1, x2, y2, x3, y3 float64) float64 {
+	area := (x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2)) / 2
+	if area < 0 {
+		area = -area
+	}
+	return area
 }
 
 // BuildPanels loads CSV data for each panel definition from the given data directory.

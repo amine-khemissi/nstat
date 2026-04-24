@@ -8,6 +8,7 @@ import (
 	"github.com/amine-khemissi/nstat/config"
 	"github.com/amine-khemissi/nstat/dim"
 	"github.com/amine-khemissi/nstat/state"
+	"github.com/amine-khemissi/nstat/version"
 )
 
 const (
@@ -50,8 +51,8 @@ func Status() {
 
 	sep := "─────────────────────────────────────────────────────────────"
 	fmt.Println()
-	fmt.Printf("  %snstat%s — pid %d  running %s  log rotates in %s%s\n",
-		colorBold, colorReset, pid, fmtDuration(elapsed), fmtDuration(rotateIn), inOutageStr)
+	fmt.Printf("  %snstat %s%s — pid %d  running %s  log rotates in %s%s\n",
+		colorBold, version.String(), colorReset, pid, fmtDuration(elapsed), fmtDuration(rotateIn), inOutageStr)
 	fmt.Printf("  last update: %s  (ping every %ds, checks every %ds, window: %d pings)\n",
 		s.Timestamp, s.PingInterval, s.LANInterval, s.RTTWindow)
 	fmt.Printf("  %s\n", sep)
@@ -66,59 +67,89 @@ func Status() {
 		{"RTT (avg)", fmt.Sprintf("%.1f ms", s.RTTAvg), dim.ScoreOf(s.RTTAvg, true, 80, 200)},
 		{"Jitter", fmt.Sprintf("%.1f ms", s.RTTJitter), dim.ScoreOf(s.RTTJitter, true, 10, 30)},
 		{"Packet loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.LossPct, s.LossTotal, s.PingsTotal), dim.ScoreOf(s.LossPct, true, 1, 5)},
-		{fmt.Sprintf("TCP %s:%d", cfg.TCPHost, cfg.TCPPort), fmt.Sprintf("%.1f ms", s.TCPLastMs), dim.ScoreOf(s.TCPLastMs, s.TCPLastOK, 150, 150)},
-		{"TCP loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.TCPLossPct, s.TCPFail, s.TCPTotal), dim.ScoreOf(s.TCPLossPct, true, 1, 5)},
-		{fmt.Sprintf("DNS %s", s.DNSServer), fmt.Sprintf("%.1f ms", s.DNSLastMs), dim.ScoreOf(s.DNSLastMs, s.DNSLastOK, 100, 500)},
-		{fmt.Sprintf("DHCP %s", s.DHCPServer), fmt.Sprintf("%.1f ms", s.DHCPLastMs), dim.ScoreOf(s.DHCPLastMs, s.DHCPLastOK, 10, 50)},
-		{"Outages/1h", fmt.Sprintf("%d  (%d total)", outages1h, s.OutageCount), dim.ScoreOf(float64(outages1h), true, 1, 3)},
 	}
 
-	// Add per-target TCP rows if we have multiple targets
-	if len(s.TCPTargets) > 1 {
-		for _, t := range s.TCPTargets[1:] { // skip first, already shown above
-			name := fmt.Sprintf("TCP %s:%d", t.Host, t.Port)
-			value := fmt.Sprintf("%.1f ms  loss:%.1f%%", t.LastMs, t.LossPct)
-			rows = append(rows, struct {
-				name  string
-				value string
-				score dim.Score
-			}{name, value, dim.ScoreOf(t.LossPct, t.LastOK, 1, 5)})
+	// Add all TCP targets
+	for i, t := range s.TCPTargets {
+		name := fmt.Sprintf("TCP %s:%d", t.Host, t.Port)
+		var value string
+		if i == 0 {
+			// Primary target shows more detail
+			value = fmt.Sprintf("%.1f ms", t.LastMs)
+		} else {
+			value = fmt.Sprintf("%.1f ms  loss:%.1f%%", t.LastMs, t.LossPct)
 		}
-	}
-
-	// Add TCP failure breakdown if there are failures
-	if s.TCPFail > 0 || s.TCPTimeoutCount > 0 || s.TCPRefusedCount > 0 {
-		breakdown := fmt.Sprintf("to:%d ref:%d rst:%d oth:%d",
-			s.TCPTimeoutCount, s.TCPRefusedCount, s.TCPResetCount, s.TCPOtherCount)
 		rows = append(rows, struct {
 			name  string
 			value string
 			score dim.Score
-		}{"TCP breakdown", breakdown, dim.Good})
+		}{name, value, dim.ScoreOf(t.LastMs, t.LastOK, 150, 150)})
 	}
 
-	// Add MTU probe results if enabled
+	// Fallback if no targets in state (old state format)
+	if len(s.TCPTargets) == 0 {
+		rows = append(rows, struct {
+			name  string
+			value string
+			score dim.Score
+		}{fmt.Sprintf("TCP %s:%d", cfg.TCPHost, cfg.TCPPort), fmt.Sprintf("%.1f ms", s.TCPLastMs), dim.ScoreOf(s.TCPLastMs, s.TCPLastOK, 150, 150)})
+	}
+
+	// TCP loss (aggregated)
+	rows = append(rows, struct {
+		name  string
+		value string
+		score dim.Score
+	}{"TCP loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.TCPLossPct, s.TCPFail, s.TCPTotal), dim.ScoreOf(s.TCPLossPct, true, 1, 5)})
+
+	// TCP failure breakdown (always show)
+	tcpBreakdown := fmt.Sprintf("to:%d ref:%d rst:%d oth:%d",
+		s.TCPTimeoutCount, s.TCPRefusedCount, s.TCPResetCount, s.TCPOtherCount)
+	tcpBreakdownScore := dim.Good
+	if s.TCPTimeoutCount > 0 || s.TCPRefusedCount > 0 || s.TCPResetCount > 0 {
+		tcpBreakdownScore = dim.Warn
+	}
+	rows = append(rows, struct {
+		name  string
+		value string
+		score dim.Score
+	}{"TCP breakdown", tcpBreakdown, tcpBreakdownScore})
+
+	// MTU probe (always show)
+	mtuValue := "not tested"
+	mtuScore := dim.Good
 	if s.MTUDetected > 0 {
-		mtuValue := fmt.Sprintf("%d bytes", s.MTUDetected)
+		mtuValue = fmt.Sprintf("%d bytes", s.MTUDetected)
 		if s.MTUHasIssues {
-			mtuValue = fmt.Sprintf("%d bytes (issues!)", s.MTUDetected)
+			mtuValue = fmt.Sprintf("%d bytes (fragmentation!)", s.MTUDetected)
+			mtuScore = dim.Warn
 		}
-		mtuScore := dim.Good
 		if s.MTUDetected < 1400 {
 			mtuScore = dim.Warn
 		}
 		if s.MTUDetected < 1200 {
 			mtuScore = dim.Crit
 		}
-		rows = append(rows, struct {
-			name  string
-			value string
-			score dim.Score
-		}{"MTU probe", mtuValue, mtuScore})
 	}
+	rows = append(rows, struct {
+		name  string
+		value string
+		score dim.Score
+	}{"MTU probe", mtuValue, mtuScore})
 
-	// Add kernel TCP stats if available
-	if s.KernelDeltaOutSegs > 0 || s.KernelRetransPct > 0 {
+	// Continue with standard dimensions
+	rows = append(rows, []struct {
+		name  string
+		value string
+		score dim.Score
+	}{
+		{fmt.Sprintf("DNS %s", s.DNSServer), fmt.Sprintf("%.1f ms", s.DNSLastMs), dim.ScoreOf(s.DNSLastMs, s.DNSLastOK, 100, 500)},
+		{fmt.Sprintf("DHCP %s", s.DHCPServer), fmt.Sprintf("%.1f ms", s.DHCPLastMs), dim.ScoreOf(s.DHCPLastMs, s.DHCPLastOK, 10, 50)},
+		{"Outages/1h", fmt.Sprintf("%d  (%d total)", outages1h, s.OutageCount), dim.ScoreOf(float64(outages1h), true, 1, 3)},
+	}...)
+
+	// Kernel TCP stats (only show if we have data, since not all platforms support it)
+	if s.KernelDeltaOutSegs > 0 || s.KernelRetransPct > 0 || s.KernelCurrEstab > 0 {
 		retransValue := fmt.Sprintf("%.2f%%  (+%d/%d segs)", s.KernelRetransPct, s.KernelDeltaRetrans, s.KernelDeltaOutSegs)
 		rows = append(rows, struct {
 			name  string
