@@ -61,6 +61,35 @@ func detectGateway() (string, error) {
 	return "", fmt.Errorf("no default gateway found")
 }
 
+// TCPTuning holds the kernel TCP timeout configuration.
+type TCPTuning struct {
+	SynRetries      int
+	Retries2        int
+	KeepaliveTime   int
+	KeepaliveIntvl  int
+	KeepaliveProbes int
+	FinTimeout      int
+}
+
+// ReadTCPTuning reads TCP timeout settings. macOS uses different sysctls.
+func ReadTCPTuning() (*TCPTuning, error) {
+	t := &TCPTuning{
+		SynRetries:      -1,
+		Retries2:        -1,
+		KeepaliveTime:   7200, // macOS default
+		KeepaliveIntvl:  75,
+		KeepaliveProbes: 8,
+		FinTimeout:      60,
+	}
+	// macOS doesn't expose these the same way, return defaults
+	return t, nil
+}
+
+// IsFastFail returns true if TCP settings are tuned for fast failure.
+func (t *TCPTuning) IsFastFail() bool {
+	return t.KeepaliveTime <= 300
+}
+
 // ReadKernelTCPStats returns TCP statistics. On macOS, uses netstat -s.
 // Returns: retransSegs, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab
 func ReadKernelTCPStats() (int64, int64, int64, int64, int64, int64, int64, int64, error) {

@@ -80,6 +80,9 @@ func Run(cfg *config.Config) {
 		}
 	}
 
+	// Read TCP tuning settings
+	tcpTuning, _ := ReadTCPTuning()
+
 	snap := &state.State{
 		SessionStart: time.Now().Unix(),
 		PingInterval: int(cfg.PingInterval.Seconds()),
@@ -91,6 +94,17 @@ func Run(cfg *config.Config) {
 		DNSLastOK:    true,
 		DHCPLastOK:   true,
 		TCPTargets:   tcpTargetStates,
+	}
+
+	// Store TCP tuning in state
+	if tcpTuning != nil {
+		snap.TCPSynRetries = tcpTuning.SynRetries
+		snap.TCPRetries2 = tcpTuning.Retries2
+		snap.TCPKeepaliveTime = tcpTuning.KeepaliveTime
+		snap.TCPKeepaliveIntvl = tcpTuning.KeepaliveIntvl
+		snap.TCPKeepaliveProbes = tcpTuning.KeepaliveProbes
+		snap.TCPFinTimeout = tcpTuning.FinTimeout
+		snap.TCPFastFail = tcpTuning.IsFastFail()
 	}
 
 	// --- write PID file -----------------------------------------------------

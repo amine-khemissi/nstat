@@ -66,6 +66,45 @@ func hexToIPv4LE(s string) (string, error) {
 	return fmt.Sprintf("%d.%d.%d.%d", b[3], b[2], b[1], b[0]), nil
 }
 
+// TCPTuning holds the kernel TCP timeout configuration.
+type TCPTuning struct {
+	SynRetries    int
+	Retries2      int
+	KeepaliveTime int // seconds
+	KeepaliveIntvl int
+	KeepaliveProbes int
+	FinTimeout    int
+}
+
+// ReadTCPTuning reads TCP timeout settings from sysctl.
+func ReadTCPTuning() (*TCPTuning, error) {
+	t := &TCPTuning{}
+
+	readInt := func(path string) int {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return -1
+		}
+		var v int
+		fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &v)
+		return v
+	}
+
+	t.SynRetries = readInt("/proc/sys/net/ipv4/tcp_syn_retries")
+	t.Retries2 = readInt("/proc/sys/net/ipv4/tcp_retries2")
+	t.KeepaliveTime = readInt("/proc/sys/net/ipv4/tcp_keepalive_time")
+	t.KeepaliveIntvl = readInt("/proc/sys/net/ipv4/tcp_keepalive_intvl")
+	t.KeepaliveProbes = readInt("/proc/sys/net/ipv4/tcp_keepalive_probes")
+	t.FinTimeout = readInt("/proc/sys/net/ipv4/tcp_fin_timeout")
+
+	return t, nil
+}
+
+// IsFastFail returns true if TCP settings are tuned for fast failure.
+func (t *TCPTuning) IsFastFail() bool {
+	return t.SynRetries <= 3 && t.Retries2 <= 8 && t.KeepaliveTime <= 300
+}
+
 // ReadKernelTCPStats reads TCP statistics from /proc/net/snmp.
 // Returns: retransSegs, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab
 func ReadKernelTCPStats() (int64, int64, int64, int64, int64, int64, int64, int64, error) {

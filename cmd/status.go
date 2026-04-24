@@ -172,6 +172,19 @@ func Status() {
 		fmt.Printf("  %-22s  %-22s  %s\n", r.name, r.value, scoreColor(r.score))
 	}
 
+	// TCP tuning (sysctl settings) - shown separately with custom label
+	if s.TCPSynRetries > 0 || s.TCPRetries2 > 0 {
+		tuningValue := fmt.Sprintf("syn:%d ret:%d ka:%s",
+			s.TCPSynRetries, s.TCPRetries2, fmtSeconds(s.TCPKeepaliveTime))
+		var tuningDisplay string
+		if s.TCPFastFail {
+			tuningDisplay = colorGreen + "●  OK" + colorReset
+		} else {
+			tuningDisplay = colorYellow + "●  SLOW" + colorReset
+		}
+		fmt.Printf("  %-22s  %-22s  %s\n", "TCP tuning", tuningValue, tuningDisplay)
+	}
+
 	fmt.Printf("  %s\n", sep)
 	overall := overallScore(s, outages1h)
 	fmt.Printf("  %-22s  %-22s  %s\n", "Overall", "", scoreColor(overall))
@@ -228,5 +241,16 @@ func fmtDuration(d time.Duration) string {
 		return fmt.Sprintf("%.1fmin", s/60)
 	default:
 		return fmt.Sprintf("%.2fh", s/3600)
+	}
+}
+
+func fmtSeconds(secs int) string {
+	switch {
+	case secs < 60:
+		return fmt.Sprintf("%ds", secs)
+	case secs < 3600:
+		return fmt.Sprintf("%dm", secs/60)
+	default:
+		return fmt.Sprintf("%dh", secs/3600)
 	}
 }

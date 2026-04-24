@@ -64,6 +64,15 @@ type State struct {
 	KernelDeltaResets   int64   `json:"kernel_delta_resets,omitempty"`
 	KernelCurrEstab     int64   `json:"kernel_curr_estab,omitempty"`
 
+	// TCP tuning (sysctl values)
+	TCPSynRetries      int  `json:"tcp_syn_retries,omitempty"`
+	TCPRetries2        int  `json:"tcp_retries2,omitempty"`
+	TCPKeepaliveTime   int  `json:"tcp_keepalive_time,omitempty"`
+	TCPKeepaliveIntvl  int  `json:"tcp_keepalive_intvl,omitempty"`
+	TCPKeepaliveProbes int  `json:"tcp_keepalive_probes,omitempty"`
+	TCPFinTimeout      int  `json:"tcp_fin_timeout,omitempty"`
+	TCPFastFail        bool `json:"tcp_fast_fail,omitempty"`
+
 	DNSServer    string  `json:"dns_server"`
 	DNSLastMs    float64 `json:"dns_last_ms"`
 	DNSLastOK    bool    `json:"dns_last_ok"`

@@ -49,6 +49,35 @@ func detectGateway() (string, error) {
 	return "", fmt.Errorf("no default gateway found")
 }
 
+// TCPTuning holds the kernel TCP timeout configuration.
+type TCPTuning struct {
+	SynRetries      int
+	Retries2        int
+	KeepaliveTime   int
+	KeepaliveIntvl  int
+	KeepaliveProbes int
+	FinTimeout      int
+}
+
+// ReadTCPTuning reads TCP timeout settings. Windows uses registry.
+func ReadTCPTuning() (*TCPTuning, error) {
+	t := &TCPTuning{
+		SynRetries:      2,    // Windows default
+		Retries2:        5,    // Windows default (TcpMaxDataRetransmissions)
+		KeepaliveTime:   7200, // Windows default
+		KeepaliveIntvl:  1,
+		KeepaliveProbes: 10,
+		FinTimeout:      120,  // Windows default (TcpTimedWaitDelay)
+	}
+	// Could read from registry, but defaults are reasonable
+	return t, nil
+}
+
+// IsFastFail returns true if TCP settings are tuned for fast failure.
+func (t *TCPTuning) IsFastFail() bool {
+	return t.KeepaliveTime <= 300
+}
+
 // ReadKernelTCPStats returns TCP statistics. On Windows, uses netstat -s.
 // Returns: retransSegs, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab
 func ReadKernelTCPStats() (int64, int64, int64, int64, int64, int64, int64, int64, error) {
