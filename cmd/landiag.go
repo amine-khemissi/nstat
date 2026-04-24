@@ -57,7 +57,8 @@ func RunLANDiag() {
 	// Find other LAN hosts
 	lanHosts := discoverLANHosts(gateway)
 	for _, host := range lanHosts {
-		results = append(results, testICMP(host, "LAN "+host))
+		name := formatLANHost(host)
+		results = append(results, testICMP(host.IP, name))
 	}
 
 	// WAN tests
@@ -263,16 +264,22 @@ func detectGateway() string {
 	return ""
 }
 
-func discoverLANHosts(gateway string) []string {
+type lanHost struct {
+	IP   string
+	MAC  string
+	Name string
+}
+
+func discoverLANHosts(gateway string) []lanHost {
 	out, err := exec.Command("ip", "neigh", "show").Output()
 	if err != nil {
 		return nil
 	}
 
-	hosts := []string{}
+	hosts := []lanHost{}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 4 {
+		if len(fields) < 5 {
 			continue
 		}
 		ip := fields[0]
@@ -283,12 +290,368 @@ func discoverLANHosts(gateway string) []string {
 		if !strings.HasPrefix(ip, "192.168") && !strings.HasPrefix(ip, "10.") && !strings.HasPrefix(ip, "172.") {
 			continue
 		}
-		if state == "REACHABLE" || state == "STALE" || state == "DELAY" {
-			hosts = append(hosts, ip)
+		if state != "REACHABLE" && state != "STALE" && state != "DELAY" {
+			continue
 		}
-		if len(hosts) >= 3 {
+
+		// Find MAC address (usually after "lladdr")
+		mac := ""
+		for i, f := range fields {
+			if f == "lladdr" && i+1 < len(fields) {
+				mac = fields[i+1]
+				break
+			}
+		}
+
+		name := resolveHostname(ip, mac)
+		hosts = append(hosts, lanHost{IP: ip, MAC: mac, Name: name})
+
+		if len(hosts) >= 5 {
 			break
 		}
 	}
 	return hosts
+}
+
+// resolveHostname tries multiple methods to get a hostname for an IP
+func resolveHostname(ip, mac string) string {
+	// Try reverse DNS first (fastest)
+	if name := tryReverseDNS(ip); name != "" {
+		return name
+	}
+
+	// Try mDNS/Avahi (for .local names)
+	if name := tryMDNS(ip); name != "" {
+		return name
+	}
+
+	// Try NetBIOS (for Windows devices)
+	if name := tryNetBIOS(ip); name != "" {
+		return name
+	}
+
+	// Fall back to MAC vendor
+	if mac != "" {
+		if vendor := macVendor(mac); vendor != "" {
+			return vendor
+		}
+	}
+
+	return ""
+}
+
+func tryReverseDNS(ip string) string {
+	out, err := exec.Command("host", "-W", "1", ip).Output()
+	if err != nil {
+		return ""
+	}
+	// Parse "X.X.X.X.in-addr.arpa domain name pointer hostname."
+	s := string(out)
+	if idx := strings.Index(s, "domain name pointer "); idx >= 0 {
+		name := strings.TrimSpace(s[idx+20:])
+		name = strings.TrimSuffix(name, ".")
+		// Skip generic PTR records
+		if strings.Contains(name, "in-addr.arpa") {
+			return ""
+		}
+		return shortenName(name)
+	}
+	return ""
+}
+
+func tryMDNS(ip string) string {
+	out, err := exec.Command("avahi-resolve", "-a", ip).Output()
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) >= 2 {
+		return shortenName(fields[1])
+	}
+	return ""
+}
+
+func tryNetBIOS(ip string) string {
+	out, err := exec.Command("nmblookup", "-A", ip).Output()
+	if err != nil {
+		return ""
+	}
+	// Parse output for <00> unique name
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "<00>") && strings.Contains(line, "UNIQUE") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				return fields[0]
+			}
+		}
+	}
+	return ""
+}
+
+func shortenName(name string) string {
+	// Remove common suffixes
+	name = strings.TrimSuffix(name, ".local")
+	name = strings.TrimSuffix(name, ".lan")
+	name = strings.TrimSuffix(name, ".home")
+	name = strings.TrimSuffix(name, ".internal")
+	// Truncate if too long
+	if len(name) > 12 {
+		name = name[:9] + "..."
+	}
+	return name
+}
+
+func formatLANHost(host lanHost) string {
+	// Get last octet of IP for short display
+	parts := strings.Split(host.IP, ".")
+	shortIP := host.IP
+	if len(parts) == 4 {
+		shortIP = "." + parts[3]
+	}
+
+	if host.Name != "" {
+		// Show name with short IP
+		name := host.Name
+		if len(name) > 14 {
+			name = name[:11] + "..."
+		}
+		return fmt.Sprintf("%s %s", name, shortIP)
+	}
+	return host.IP
+}
+
+// macVendor returns a short vendor name based on MAC OUI prefix
+func macVendor(mac string) string {
+	mac = strings.ToUpper(strings.ReplaceAll(mac, ":", ""))
+	if len(mac) < 6 {
+		return ""
+	}
+	oui := mac[:6]
+
+	// Common OUI prefixes (first 3 bytes of MAC)
+	vendors := map[string]string{
+		"00037A": "Taiyo",
+		"000C29": "VMware",
+		"001132": "Synology",
+		"0017F2": "Apple",
+		"0019E3": "Apple",
+		"001B63": "Apple",
+		"001CB3": "Apple",
+		"001D4F": "Apple",
+		"001E52": "Apple",
+		"001EC2": "Apple",
+		"001F5B": "Apple",
+		"001FF3": "Apple",
+		"0021E9": "Apple",
+		"002241": "Apple",
+		"002312": "Apple",
+		"002332": "Apple",
+		"002436": "Apple",
+		"00254B": "Apple",
+		"0025BC": "Apple",
+		"002608": "Apple",
+		"00264A": "Apple",
+		"0026B0": "Apple",
+		"0026BB": "Apple",
+		"003065": "Apple",
+		"003EE1": "Apple",
+		"0050E4": "Apple",
+		"005882": "Apple",
+		"006171": "Apple",
+		"00A040": "Apple",
+		"00B362": "Apple",
+		"00C610": "Apple",
+		"00CDFE": "Apple",
+		"00F4B9": "Apple",
+		"00F76F": "Apple",
+		"041552": "Apple",
+		"042665": "Apple",
+		"045453": "Apple",
+		"0C4DE9": "Apple",
+		"0C771A": "Apple",
+		"0CBC9F": "Apple",
+		"1040F3": "Apple",
+		"10417F": "Apple",
+		"1094BB": "Apple",
+		"109ADD": "Apple",
+		"18AF8F": "Apple",
+		"18E7F4": "Apple",
+		"1C1AC0": "Apple",
+		"244B03": "Apple",
+		"28A02B": "Apple",
+		"28CFDA": "Apple",
+		"2CB43A": "Apple",
+		"34363B": "Apple",
+		"3C0754": "Apple",
+		"3C15C2": "Apple",
+		"3CE072": "Apple",
+		"40331A": "Apple",
+		"403004": "Apple",
+		"442A60": "Apple",
+		"44D884": "Apple",
+		"48437C": "Apple",
+		"48D705": "Apple",
+		"4C32F5": "Apple",
+		"4C8D79": "Apple",
+		"503237": "Apple",
+		"5433CB": "Apple",
+		"549F13": "Apple",
+		"54E43A": "Apple",
+		"5855CA": "Apple",
+		"587F57": "Apple",
+		"5C5948": "Apple",
+		"5C969D": "Apple",
+		"5CCFCF": "Apple",
+		"60C5AD": "Apple",
+		"60D9C7": "Apple",
+		"60F81D": "Apple",
+		"640980": "Apple",
+		"68D93C": "Apple",
+		"6C4008": "Apple",
+		"6C709F": "Apple",
+		"6C94F8": "Apple",
+		"70EF00": "Apple",
+		"749EAF": "Apple",
+		"78A3E4": "Apple",
+		"7C0191": "Apple",
+		"7CC3A1": "Apple",
+		"7CD1C3": "Apple",
+		"848506": "Apple",
+		"84788B": "Apple",
+		"848E0C": "Apple",
+		"84FCFE": "Apple",
+		"88C663": "Apple",
+		"8C5877": "Apple",
+		"8C8590": "Apple",
+		"8CFABA": "Apple",
+		"90840D": "Apple",
+		"90B21F": "Apple",
+		"90B931": "Apple",
+		"98B8E3": "Apple",
+		"98D6BB": "Apple",
+		"98E0D9": "Apple",
+		"9C04EB": "Apple",
+		"9C207B": "Apple",
+		"9C35EB": "Apple",
+		"A01828": "Apple",
+		"A03BE3": "Apple",
+		"A0999B": "Apple",
+		"A42305": "Apple",
+		"A45E60": "Apple",
+		"A4B197": "Apple",
+		"A4D18C": "Apple",
+		"A82066": "Apple",
+		"A8968A": "Apple",
+		"AC293A": "Apple",
+		"ACFDEC": "Apple",
+		"B065BD": "Apple",
+		"B0702D": "Apple",
+		"B48B19": "Apple",
+		"B8098A": "Apple",
+		"B817C2": "Apple",
+		"B8C75D": "Apple",
+		"B8E856": "Apple",
+		"B8F6B1": "Apple",
+		"B8FF61": "Apple",
+		"BC3BAF": "Apple",
+		"BC4CC4": "Apple",
+		"BC52B7": "Apple",
+		"BC6778": "Apple",
+		"C01ADA": "Apple",
+		"C0CECD": "Apple",
+		"C81EE7": "Apple",
+		"C82A14": "Apple",
+		"C8334B": "Apple",
+		"C869CD": "Apple",
+		"C88550": "Apple",
+		"C8B5B7": "Apple",
+		"CC088D": "Apple",
+		"CC29F5": "Apple",
+		"D023DB": "Apple",
+		"D49A20": "Apple",
+		"D4F46F": "Apple",
+		"D81D72": "Apple",
+		"D89E3F": "Apple",
+		"D8A25E": "Apple",
+		"D8BB2C": "Apple",
+		"DC0C5C": "Apple",
+		"DC2B2A": "Apple",
+		"DC2B61": "Apple",
+		"DC86D8": "Apple",
+		"DCA4CA": "Apple",
+		"E05F45": "Apple",
+		"E0ACCB": "Apple",
+		"E0B52D": "Apple",
+		"E0C767": "Apple",
+		"E0F5C6": "Apple",
+		"E0F847": "Apple",
+		"E4C63D": "Apple",
+		"E4CE8F": "Apple",
+		"E80688": "Apple",
+		"E89120": "Apple",
+		"F02475": "Apple",
+		"F04F7C": "Apple",
+		"F0989D": "Apple",
+		"F0B479": "Apple",
+		"F0C1F1": "Apple",
+		"F0D1A9": "Apple",
+		"F0DBE2": "Apple",
+		"F41BA1": "Apple",
+		"F45C89": "Apple",
+		"F4F15A": "Apple",
+		"FC253F": "Apple",
+		"FCFC48": "Apple",
+
+		"000D3A": "Microsoft",
+		"0015C5": "Dell",
+		"0018FE": "HP",
+		"001A4B": "HP",
+		"001D0F": "TP-Link",
+		"001E58": "D-Link",
+		"0022FA": "Intel",
+		"002314": "Intel",
+		"002564": "Dell",
+		"002590": "Super Micro",
+		"0026C7": "Cisco",
+		"00505E": "Cisco",
+		"002618": "ASUS",
+		"0050F2": "Microsoft",
+		"00E04C": "Realtek",
+		"080027": "VirtualBox",
+		"0A0027": "VirtualBox",
+		"18C04D": "Gree",
+		"2491FB": "Amazon",
+		"28EE52": "TP-Link",
+		"40F520": "Google",
+		"485D36": "Google",
+		"50E14A": "Amazon",
+		"5C5188": "HP",
+		"6045CB": "ASUS",
+		"68D79A": "Cisco",
+		"6C72E7": "Intel",
+		"744D28": "Samsung",
+		"7825AD": "Samsung",
+		"78E1AB": "HP",
+		"8C85C1": "Samsung",
+		"94B86D": "Samsung",
+		"9C5C8E": "ASUS",
+		"A0AFBD": "Intel",
+		"A44CC8": "Intel",
+		"AC220B": "ASUS",
+		"B8AC6F": "Dell",
+		"BC5C4C": "Elecom",
+		"C0A0BB": "D-Link",
+		"C4AC59": "Synology",
+		"D067E5": "Dell",
+		"D45D64": "ASUS",
+		"E4BEED": "Netgear",
+		"EC086B": "TP-Link",
+		"F4EC38": "TP-Link",
+		"F8A2D6": "TP-Link",
+	}
+
+	if vendor, ok := vendors[oui]; ok {
+		return "[" + vendor + "]"
+	}
+	return ""
 }
