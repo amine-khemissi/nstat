@@ -20,7 +20,13 @@ func main() {
 	case "stop":
 		cmd.Stop()
 	case "status":
-		cmd.Status()
+		// Check for -l flag
+		if len(os.Args) > 2 && (os.Args[2] == "-l" || os.Args[2] == "--lan") {
+			cmd.Status()
+			cmd.RunLANDiag()
+		} else {
+			cmd.Status()
+		}
 	case "log":
 		cmd.Log()
 	case "graph":

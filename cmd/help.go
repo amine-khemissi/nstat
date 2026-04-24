@@ -14,15 +14,19 @@ func Help() {
 %sUSAGE%s
   nstat start [--interval N] [--window N]
   nstat stop
-  nstat status
+  nstat status [-l]
   nstat log
   nstat graph [--hours N]
-  nstat -h
+  nstat -h | -v
 
 %sOPTIONS (start)%s
   --interval N   seconds between ICMP pings (default: 5)
   --window N     number of pings used for RTT avg/jitter (default: 60)
                  e.g. window=60 with interval=5 → 5-minute rolling average
+
+%sOPTIONS (status)%s
+  -l, --lan      run LAN diagnostics: 50 samples of ICMP, TCP, DNS to
+                 router, LAN hosts, and WAN targets to isolate issues
 
 %sDIMENSIONS%s
   RTT (avg)      rolling average ICMP RTT to 8.8.8.8
@@ -55,6 +59,7 @@ func Help() {
   Data directory: %s
 
 `,
+		"\033[1m", "\033[0m",
 		"\033[1m", "\033[0m",
 		"\033[1m", "\033[0m",
 		"\033[1m", "\033[0m",
