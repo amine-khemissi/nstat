@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+// TCPTargetState holds per-target TCP statistics.
+type TCPTargetState struct {
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	LastMs       float64 `json:"last_ms"`
+	LastOK       bool   `json:"last_ok"`
+	LastReason   string `json:"last_reason"` // timeout, refused, reset, dns, other
+	Total        int    `json:"total"`
+	Fail         int    `json:"fail"`
+	LossPct      float64 `json:"loss_pct"`
+	TimeoutCount int    `json:"timeout_count"`
+	RefusedCount int    `json:"refused_count"`
+	ResetCount   int    `json:"reset_count"`
+	OtherCount   int    `json:"other_count"`
+}
+
 type State struct {
 	Timestamp    string  `json:"timestamp"`
 	Epoch        int64   `json:"epoch"`
@@ -23,6 +39,31 @@ type State struct {
 	TCPTotal     int     `json:"tcp_total"`
 	TCPFail      int     `json:"tcp_fail"`
 	TCPLossPct   float64 `json:"tcp_loss_pct"`
+	TCPLastReason string `json:"tcp_last_reason,omitempty"` // failure reason for primary target
+
+	// Per-target TCP stats (multiple targets for granularity)
+	TCPTargets []TCPTargetState `json:"tcp_targets,omitempty"`
+
+	// TCP failure breakdown (aggregated across all targets)
+	TCPTimeoutCount int `json:"tcp_timeout_count"`
+	TCPRefusedCount int `json:"tcp_refused_count"`
+	TCPResetCount   int `json:"tcp_reset_count"`
+	TCPOtherCount   int `json:"tcp_other_count"`
+
+	// MTU probe results
+	MTUDetected   int     `json:"mtu_detected,omitempty"`
+	MTULastMs     float64 `json:"mtu_last_ms,omitempty"`
+	MTUHasIssues  bool    `json:"mtu_has_issues,omitempty"`
+	MTUFailedSizes []int  `json:"mtu_failed_sizes,omitempty"`
+
+	// Kernel TCP stats
+	KernelRetransPct    float64 `json:"kernel_retrans_pct,omitempty"`
+	KernelDeltaRetrans  int64   `json:"kernel_delta_retrans,omitempty"`
+	KernelDeltaOutSegs  int64   `json:"kernel_delta_out_segs,omitempty"`
+	KernelDeltaInErrs   int64   `json:"kernel_delta_in_errs,omitempty"`
+	KernelDeltaResets   int64   `json:"kernel_delta_resets,omitempty"`
+	KernelCurrEstab     int64   `json:"kernel_curr_estab,omitempty"`
+
 	DNSServer    string  `json:"dns_server"`
 	DNSLastMs    float64 `json:"dns_last_ms"`
 	DNSLastOK    bool    `json:"dns_last_ok"`

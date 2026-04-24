@@ -48,3 +48,57 @@ func detectGateway() (string, error) {
 	}
 	return "", fmt.Errorf("no default gateway found")
 }
+
+// ReadKernelTCPStats returns TCP statistics. On Windows, uses netstat -s.
+// Returns: retransSegs, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab
+func ReadKernelTCPStats() (int64, int64, int64, int64, int64, int64, int64, int64, error) {
+	out, err := exec.Command("netstat", "-s", "-p", "tcp").Output()
+	if err != nil {
+		return 0, 0, 0, 0, 0, 0, 0, 0, err
+	}
+
+	var retrans, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab int64
+
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		// Windows netstat -s output format varies, parse key metrics
+		if strings.Contains(line, "Segments Retransmitted") {
+			parts := strings.Split(line, "=")
+			if len(parts) == 2 {
+				fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &retrans)
+			}
+		}
+		if strings.Contains(line, "Segments Sent") {
+			parts := strings.Split(line, "=")
+			if len(parts) == 2 {
+				fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &outSegs)
+			}
+		}
+		if strings.Contains(line, "Segments Received") {
+			parts := strings.Split(line, "=")
+			if len(parts) == 2 {
+				fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &inSegs)
+			}
+		}
+		if strings.Contains(line, "Failed Connection Attempts") {
+			parts := strings.Split(line, "=")
+			if len(parts) == 2 {
+				fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &attemptFails)
+			}
+		}
+		if strings.Contains(line, "Reset Connections") || strings.Contains(line, "Connections Reset") {
+			parts := strings.Split(line, "=")
+			if len(parts) == 2 {
+				fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &estabResets)
+			}
+		}
+		if strings.Contains(line, "Current Connections") {
+			parts := strings.Split(line, "=")
+			if len(parts) == 2 {
+				fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &currEstab)
+			}
+		}
+	}
+
+	return retrans, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab, nil
+}

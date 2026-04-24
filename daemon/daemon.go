@@ -47,14 +47,39 @@ func Run(cfg *config.Config) {
 	dhcp := dim.NewDHCP(gateway)
 	outages := dim.NewOutages()
 
+	// Multi-target TCP tracking
+	tcpTargets := make([]struct{ Host string; Port int }, len(cfg.TCPTargets))
+	for i, t := range cfg.TCPTargets {
+		tcpTargets[i] = struct{ Host string; Port int }{t.Host, t.Port}
+	}
+	tcpMulti := dim.NewTCPMulti(tcpTargets)
+
+	// MTU probe
+	mtuProbeD := dim.NewMTUProbe()
+
+	// Kernel TCP stats
+	kernelStats := dim.NewKernelTCPStats()
+	tcpRetrans := dim.NewTCPRetransmits(kernelStats)
+	tcpErrors := dim.NewTCPErrors(kernelStats)
+
 	pingObs := []dim.PingObserver{ps, lossStats}
 	tcpObs := []dim.TCPObserver{tcpStats}
 	dnsObs := []dim.DNSObserver{dns}
 	dhcpObs := []dim.DHCPObserver{dhcp}
 
-	dims := []dim.Dimension{rtt, jitter, pl, tc, tcpLoss, dns, dhcp, outages}
+	dims := []dim.Dimension{rtt, jitter, pl, tc, tcpLoss, dns, dhcp, outages, tcpRetrans, tcpErrors}
 
 	// --- state snapshot used by `nstat status` ------------------------------
+	// Initialize per-target state
+	tcpTargetStates := make([]state.TCPTargetState, len(cfg.TCPTargets))
+	for i, t := range cfg.TCPTargets {
+		tcpTargetStates[i] = state.TCPTargetState{
+			Host:   t.Host,
+			Port:   t.Port,
+			LastOK: true,
+		}
+	}
+
 	snap := &state.State{
 		SessionStart: time.Now().Unix(),
 		PingInterval: int(cfg.PingInterval.Seconds()),
@@ -65,6 +90,7 @@ func Run(cfg *config.Config) {
 		TCPLastOK:    true,
 		DNSLastOK:    true,
 		DHCPLastOK:   true,
+		TCPTargets:   tcpTargetStates,
 	}
 
 	// --- write PID file -----------------------------------------------------
@@ -89,7 +115,7 @@ func Run(cfg *config.Config) {
 	}()
 
 	// --- initial LAN check --------------------------------------------------
-	doLANChecks(cfg, dns, dhcp, tcpObs, dnsObs, dhcpObs, snap, logf, dims)
+	doLANChecks(cfg, dns, dhcp, tcpObs, dnsObs, dhcpObs, snap, logf, dims, tcpMulti, mtuProbeD, kernelStats)
 	lastLAN := time.Now()
 
 	// --- main loop ----------------------------------------------------------
@@ -194,7 +220,7 @@ func Run(cfg *config.Config) {
 
 		// ── LAN checks every LANInterval ───────────────────────────────────
 		if time.Since(lastLAN) >= cfg.LANInterval {
-			doLANChecks(cfg, dns, dhcp, tcpObs, dnsObs, dhcpObs, snap, logf, dims)
+			doLANChecks(cfg, dns, dhcp, tcpObs, dnsObs, dhcpObs, snap, logf, dims, tcpMulti, mtuProbeD, kernelStats)
 			lastLAN = time.Now()
 		}
 
@@ -217,34 +243,121 @@ func doLANChecks(
 	snap *state.State,
 	logf func(string, ...any),
 	dims []dim.Dimension,
+	tcpMulti *dim.TCPMulti,
+	mtuProbeD *dim.MTUProbe,
+	kernelStats *dim.KernelTCPStats,
 ) {
 	now := time.Now()
 
-	// TCP
-	tcpMs, err := tcpCheck(cfg.TCPHost, cfg.TCPPort, 2*time.Second)
-	ok := err == nil
-	for _, o := range tcpObs {
-		o.OnTCPResult(ok, tcpMs)
-	}
-	snap.TCPLastMs = dims[3].Value()
-	snap.TCPLastOK = ok
-	snap.TCPTotal++
-	if !ok {
-		snap.TCPFail++
-		logf("TCP FAIL  %s:%d  (%d/%d)", cfg.TCPHost, cfg.TCPPort, snap.TCPFail, snap.TCPTotal)
-	} else {
-		snap.TCPLastMs = tcpMs
-		logf("TCP OK    %s:%d  connect=%.0fms", cfg.TCPHost, cfg.TCPPort, tcpMs)
-	}
-	if snap.TCPTotal > 0 {
-		snap.TCPLossPct = float64(snap.TCPFail) / float64(snap.TCPTotal) * 100
+	// --- TCP checks for all targets ---
+	snap.TCPTimeoutCount = 0
+	snap.TCPRefusedCount = 0
+	snap.TCPResetCount = 0
+	snap.TCPOtherCount = 0
+
+	for i, target := range cfg.TCPTargets {
+		tcpMs, reason, err := tcpCheckWithReason(target.Host, target.Port, 2*time.Second)
+		ok := err == nil
+
+		// Update multi-target tracker
+		tcpMulti.RecordResult(target.Host, target.Port, ok, tcpMs, reason)
+
+		// Update per-target state
+		if i < len(snap.TCPTargets) {
+			t := tcpMulti.GetTarget(target.Host, target.Port)
+			if t != nil {
+				snap.TCPTargets[i].LastMs = t.Stats.LastMs
+				snap.TCPTargets[i].LastOK = t.Stats.LastOK
+				snap.TCPTargets[i].LastReason = t.Stats.LastReason.String()
+				snap.TCPTargets[i].Total = t.Stats.Total
+				snap.TCPTargets[i].Fail = t.Stats.Fail
+				snap.TCPTargets[i].LossPct = t.Stats.LossPct
+				snap.TCPTargets[i].TimeoutCount = t.Stats.TimeoutCount
+				snap.TCPTargets[i].RefusedCount = t.Stats.RefusedCount
+				snap.TCPTargets[i].ResetCount = t.Stats.ResetCount
+				snap.TCPTargets[i].OtherCount = t.Stats.OtherCount
+
+				// Aggregate failure counts
+				snap.TCPTimeoutCount += t.Stats.TimeoutCount
+				snap.TCPRefusedCount += t.Stats.RefusedCount
+				snap.TCPResetCount += t.Stats.ResetCount
+				snap.TCPOtherCount += t.Stats.OtherCount
+			}
+		}
+
+		if !ok {
+			logf("TCP FAIL  %s:%d  reason=%s  (%v)", target.Host, target.Port, reason, err)
+		} else {
+			logf("TCP OK    %s:%d  connect=%.0fms", target.Host, target.Port, tcpMs)
+		}
+
+		// Primary target updates main state
+		if i == 0 {
+			for _, o := range tcpObs {
+				o.OnTCPResult(ok, tcpMs)
+			}
+			snap.TCPLastMs = tcpMs
+			snap.TCPLastOK = ok
+			snap.TCPLastReason = reason.String()
+			snap.TCPTotal++
+			if !ok {
+				snap.TCPFail++
+			}
+			if snap.TCPTotal > 0 {
+				snap.TCPLossPct = float64(snap.TCPFail) / float64(snap.TCPTotal) * 100
+			}
+		}
 	}
 	appendCSV(cfg, dims[3], now) // tcp connect
 	appendCSV(cfg, dims[4], now) // tcp loss
 
+	// --- MTU Probe ---
+	if cfg.MTUEnabled {
+		mtuSize, mtuMs, err := mtuProbe(cfg.PingTarget, 2*time.Second)
+		if err != nil {
+			logf("MTU PROBE failed: %v", err)
+			mtuProbeD.OnMTUResult(0, false, 0)
+		} else {
+			mtuProbeD.OnMTUResult(mtuSize, true, mtuMs)
+			if mtuProbeD.HasFragmentation() {
+				logf("MTU WARN  detected=%d  failed_sizes=%v", mtuSize, mtuProbeD.FailedSizes)
+			} else {
+				logf("MTU OK    detected=%d  latency=%.0fms", mtuSize, mtuMs)
+			}
+		}
+		snap.MTUDetected = mtuProbeD.DetectedMTU()
+		snap.MTULastMs = mtuProbeD.LastMs
+		snap.MTUHasIssues = mtuProbeD.HasFragmentation()
+		snap.MTUFailedSizes = mtuProbeD.FailedSizes
+	}
+
+	// --- Kernel TCP Stats ---
+	if cfg.KernelStats {
+		retrans, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab, err := ReadKernelTCPStats()
+		if err != nil {
+			logf("KERNEL STATS failed: %v", err)
+		} else {
+			kernelStats.Update(retrans, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab)
+			snap.KernelRetransPct = kernelStats.RetransPct
+			snap.KernelDeltaRetrans = kernelStats.DeltaRetrans
+			snap.KernelDeltaOutSegs = kernelStats.DeltaOutSegs
+			snap.KernelDeltaInErrs = kernelStats.DeltaInErrs
+			snap.KernelDeltaResets = kernelStats.DeltaEstabResets
+			snap.KernelCurrEstab = kernelStats.CurrEstab
+
+			if kernelStats.RetransPct > 2 {
+				logf("KERNEL WARN retrans=%.2f%% (+%d segs)", kernelStats.RetransPct, kernelStats.DeltaRetrans)
+			} else {
+				logf("KERNEL OK   retrans=%.2f%% estab=%d", kernelStats.RetransPct, kernelStats.CurrEstab)
+			}
+		}
+		appendCSV(cfg, dims[8], now) // tcp retrans
+		appendCSV(cfg, dims[9], now) // tcp errors
+	}
+
 	// DNS
 	dnsMs, err := dnsCheck(dns.Server(), 2*time.Second)
-	ok = err == nil
+	ok := err == nil
 	for _, o := range dnsObs {
 		o.OnDNSResult(ok, dnsMs)
 	}

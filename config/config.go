@@ -7,16 +7,24 @@ import (
 	"time"
 )
 
+type TCPTargetConfig struct {
+	Host string
+	Port int
+}
+
 type Config struct {
 	PingTarget     string
 	PingTarget2    string
 	TCPHost        string
 	TCPPort        int
+	TCPTargets     []TCPTargetConfig // multiple TCP targets for granular testing
 	PingInterval   time.Duration
 	LANInterval    time.Duration
 	RTTWindow      int
 	LossThreshold  int
 	LogRotateEvery time.Duration
+	MTUEnabled     bool // enable MTU probing
+	KernelStats    bool // enable kernel TCP stats collection
 
 	Dir       string
 	LogFile   string
@@ -49,15 +57,22 @@ func dataDir() string {
 func Default() *Config {
 	dir := dataDir()
 	return &Config{
-		PingTarget:     "8.8.8.8",
-		PingTarget2:    "1.1.1.1",
-		TCPHost:        "8.8.8.8",
-		TCPPort:        53,
+		PingTarget:  "8.8.8.8",
+		PingTarget2: "1.1.1.1",
+		TCPHost:     "8.8.8.8",
+		TCPPort:     53,
+		TCPTargets: []TCPTargetConfig{
+			{Host: "8.8.8.8", Port: 53},   // Google DNS
+			{Host: "1.1.1.1", Port: 53},   // Cloudflare DNS
+			{Host: "8.8.8.8", Port: 443},  // Google HTTPS (tests different port)
+		},
 		PingInterval:   5 * time.Second,
 		LANInterval:    30 * time.Second,
 		RTTWindow:      60,
 		LossThreshold:  3,
 		LogRotateEvery: 24 * time.Hour,
+		MTUEnabled:     true,
+		KernelStats:    true,
 		Dir:            dir,
 		LogFile:        filepath.Join(dir, "nstat.log"),
 		StateFile:      filepath.Join(dir, "nstat.state.json"),

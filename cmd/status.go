@@ -73,6 +73,70 @@ func Status() {
 		{"Outages/1h", fmt.Sprintf("%d  (%d total)", outages1h, s.OutageCount), dim.ScoreOf(float64(outages1h), true, 1, 3)},
 	}
 
+	// Add per-target TCP rows if we have multiple targets
+	if len(s.TCPTargets) > 1 {
+		for _, t := range s.TCPTargets[1:] { // skip first, already shown above
+			name := fmt.Sprintf("TCP %s:%d", t.Host, t.Port)
+			value := fmt.Sprintf("%.1f ms  loss:%.1f%%", t.LastMs, t.LossPct)
+			rows = append(rows, struct {
+				name  string
+				value string
+				score dim.Score
+			}{name, value, dim.ScoreOf(t.LossPct, t.LastOK, 1, 5)})
+		}
+	}
+
+	// Add TCP failure breakdown if there are failures
+	if s.TCPFail > 0 || s.TCPTimeoutCount > 0 || s.TCPRefusedCount > 0 {
+		breakdown := fmt.Sprintf("to:%d ref:%d rst:%d oth:%d",
+			s.TCPTimeoutCount, s.TCPRefusedCount, s.TCPResetCount, s.TCPOtherCount)
+		rows = append(rows, struct {
+			name  string
+			value string
+			score dim.Score
+		}{"TCP breakdown", breakdown, dim.Good})
+	}
+
+	// Add MTU probe results if enabled
+	if s.MTUDetected > 0 {
+		mtuValue := fmt.Sprintf("%d bytes", s.MTUDetected)
+		if s.MTUHasIssues {
+			mtuValue = fmt.Sprintf("%d bytes (issues!)", s.MTUDetected)
+		}
+		mtuScore := dim.Good
+		if s.MTUDetected < 1400 {
+			mtuScore = dim.Warn
+		}
+		if s.MTUDetected < 1200 {
+			mtuScore = dim.Crit
+		}
+		rows = append(rows, struct {
+			name  string
+			value string
+			score dim.Score
+		}{"MTU probe", mtuValue, mtuScore})
+	}
+
+	// Add kernel TCP stats if available
+	if s.KernelDeltaOutSegs > 0 || s.KernelRetransPct > 0 {
+		retransValue := fmt.Sprintf("%.2f%%  (+%d/%d segs)", s.KernelRetransPct, s.KernelDeltaRetrans, s.KernelDeltaOutSegs)
+		rows = append(rows, struct {
+			name  string
+			value string
+			score dim.Score
+		}{"TCP retrans", retransValue, dim.ScoreOf(s.KernelRetransPct, true, 2, 5)})
+
+		if s.KernelDeltaInErrs > 0 || s.KernelDeltaResets > 0 {
+			errValue := fmt.Sprintf("errs:%d rsts:%d estab:%d", s.KernelDeltaInErrs, s.KernelDeltaResets, s.KernelCurrEstab)
+			errScore := dim.ScoreOf(float64(s.KernelDeltaInErrs+s.KernelDeltaResets), true, 1, 10)
+			rows = append(rows, struct {
+				name  string
+				value string
+				score dim.Score
+			}{"TCP errors", errValue, errScore})
+		}
+	}
+
 	for _, r := range rows {
 		fmt.Printf("  %-22s  %-22s  %s\n", r.name, r.value, scoreColor(r.score))
 	}
