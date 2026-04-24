@@ -77,6 +77,6 @@ func Default() *Config {
 		LogFile:        filepath.Join(dir, "nstat.log"),
 		StateFile:      filepath.Join(dir, "nstat.state.json"),
 		PIDFile:        filepath.Join(dir, "nstat.pid"),
-		GraphFile:      filepath.Join(dir, "nstat_graph.svg"),
+		GraphFile:      filepath.Join(dir, "nstat_graph.html"),
 	}
 }

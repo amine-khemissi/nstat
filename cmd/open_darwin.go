@@ -2,6 +2,6 @@ package cmd
 
 import "os/exec"
 
-func openSVG(path string) {
+func openHTML(path string) {
 	exec.Command("open", path).Start()
 }

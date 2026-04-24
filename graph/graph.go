@@ -1,29 +1,14 @@
-// Package graph generates SVG time-series charts from nstat CSV files.
-// No external dependencies — output is a single SVG file openable in any browser.
+// Package graph generates an interactive HTML dashboard from nstat CSV files.
+// Uses Plotly.js for zoomable, synchronized time-series charts.
 package graph
 
 import (
 	"encoding/csv"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-)
-
-const (
-	svgWidth      = 1400
-	panelH        = 200
-	padTop        = 25
-	padBot        = 45
-	padLeft       = 80
-	padRight      = 30
-	plotW         = svgWidth - padLeft - padRight // 1290
-	plotH         = panelH - padTop - padBot      // 130
-	headerH       = 45
-	gridLines     = 5
-	maxDataPoints = 2000 // max points per panel to keep SVG size reasonable
 )
 
 type Point struct {
@@ -41,238 +26,7 @@ type Panel struct {
 
 type Options struct {
 	Title  string
-	Cutoff *time.Time // nil = all data
-}
-
-// Generate writes an SVG chart to outputPath from the given panels.
-func Generate(panels []Panel, opts Options, outputPath string) error {
-	f, err := os.Create(outputPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	totalH := headerH + len(panels)*panelH + 20
-
-	fmt.Fprintf(f, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`, svgWidth, totalH)
-	fmt.Fprintln(f)
-	fmt.Fprintf(f, `<rect width="%d" height="%d" fill="#1e1e2e"/>`, svgWidth, totalH)
-	fmt.Fprintln(f)
-	fmt.Fprintf(f, `<text x="%d" y="28" text-anchor="middle" font-family="monospace" `+
-		`font-size="14" font-weight="bold" fill="#cdd6f4">%s</text>`,
-		svgWidth/2, opts.Title)
-	fmt.Fprintln(f)
-
-	for i, p := range panels {
-		yOff := headerH + i*panelH
-		renderPanel(f, p, yOff, opts.Cutoff)
-	}
-
-	fmt.Fprintln(f, `</svg>`)
-	return nil
-}
-
-func renderPanel(w io.Writer, p Panel, yOff int, cutoff *time.Time) {
-	data := p.Data
-	if cutoff != nil {
-		var filtered []Point
-		for _, pt := range data {
-			if !pt.T.Before(*cutoff) {
-				filtered = append(filtered, pt)
-			}
-		}
-		data = filtered
-	}
-
-	// Sample data if too many points to avoid huge SVGs
-	data = sampleData(data, maxDataPoints)
-
-	// panel background
-	fmt.Fprintf(w, `<rect x="0" y="%d" width="%d" height="%d" fill="#181825"/>`,
-		yOff, svgWidth, panelH)
-	fmt.Fprintln(w)
-
-	// panel label
-	fmt.Fprintf(w, `<text x="8" y="%d" font-family="monospace" font-size="11" fill="#cdd6f4">%s (%s)</text>`,
-		yOff+padTop+8, p.Name, p.Unit)
-	fmt.Fprintln(w)
-
-	// plot area outline
-	px, py := padLeft, yOff+padTop
-	fmt.Fprintf(w, `<rect x="%d" y="%d" width="%d" height="%d" fill="#1e1e2e" stroke="#313244" stroke-width="0.5"/>`,
-		px, py, plotW, plotH)
-	fmt.Fprintln(w)
-
-	if len(data) == 0 {
-		fmt.Fprintf(w, `<text x="%d" y="%d" text-anchor="middle" font-family="monospace" font-size="10" fill="#6c7086">no data yet</text>`,
-			padLeft+plotW/2, py+plotH/2+4)
-		fmt.Fprintln(w)
-		return
-	}
-
-	// compute ranges
-	minT, maxT := data[0].T, data[0].T
-	maxV := 0.0
-	for _, pt := range data {
-		if pt.T.Before(minT) {
-			minT = pt.T
-		}
-		if pt.T.After(maxT) {
-			maxT = pt.T
-		}
-		if pt.V > maxV {
-			maxV = pt.V
-		}
-	}
-	if maxV < p.Crit*1.2 {
-		maxV = p.Crit * 1.2
-	}
-	if maxV == 0 {
-		maxV = 1
-	}
-	tRange := maxT.Sub(minT).Seconds()
-	if tRange == 0 {
-		tRange = 1
-	}
-
-	scaleX := func(t time.Time) float64 {
-		return float64(padLeft) + float64(plotW)*t.Sub(minT).Seconds()/tRange
-	}
-	scaleY := func(v float64) float64 {
-		frac := v / maxV
-		if frac > 1 {
-			frac = 1
-		}
-		return float64(py+plotH) - float64(plotH)*frac
-	}
-
-	// grid lines + y-axis labels
-	for i := 1; i <= gridLines; i++ {
-		gv := maxV * float64(i) / float64(gridLines)
-		gy := scaleY(gv)
-		fmt.Fprintf(w, `<line x1="%d" y1="%.1f" x2="%d" y2="%.1f" stroke="#313244" stroke-width="0.5"/>`,
-			padLeft, gy, padLeft+plotW, gy)
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, `<text x="%d" y="%.1f" text-anchor="end" font-family="monospace" font-size="8" fill="#6c7086">%.1f</text>`,
-			padLeft-3, gy+3, gv)
-		fmt.Fprintln(w)
-	}
-
-	// warn line
-	if p.Warn > 0 && p.Warn != p.Crit {
-		wy := scaleY(p.Warn)
-		fmt.Fprintf(w, `<line x1="%d" y1="%.1f" x2="%d" y2="%.1f" stroke="#f9e2af" stroke-width="0.8" stroke-dasharray="4,4" opacity="0.8"/>`,
-			padLeft, wy, padLeft+plotW, wy)
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, `<text x="%d" y="%.1f" font-family="monospace" font-size="8" fill="#f9e2af">warn %.0f</text>`,
-			padLeft+plotW+2, wy+3, p.Warn)
-		fmt.Fprintln(w)
-	}
-	// crit line
-	if p.Crit > 0 {
-		cy := scaleY(p.Crit)
-		fmt.Fprintf(w, `<line x1="%d" y1="%.1f" x2="%d" y2="%.1f" stroke="#f38ba8" stroke-width="0.8" stroke-dasharray="4,4" opacity="0.8"/>`,
-			padLeft, cy, padLeft+plotW, cy)
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, `<text x="%d" y="%.1f" font-family="monospace" font-size="8" fill="#f38ba8">crit %.0f</text>`,
-			padLeft+plotW+2, cy+3, p.Crit)
-		fmt.Fprintln(w)
-	}
-
-	// fill polygon
-	var fillPts strings.Builder
-	fmt.Fprintf(&fillPts, "%.1f,%.1f ", scaleX(data[0].T), float64(py+plotH))
-	for _, pt := range data {
-		fmt.Fprintf(&fillPts, "%.1f,%.1f ", scaleX(pt.T), scaleY(pt.V))
-	}
-	fmt.Fprintf(&fillPts, "%.1f,%.1f", scaleX(data[len(data)-1].T), float64(py+plotH))
-	fmt.Fprintf(w, `<polygon points="%s" fill="#89b4fa" opacity="0.12"/>`, fillPts.String())
-	fmt.Fprintln(w)
-
-	// data polyline
-	var pts strings.Builder
-	for _, pt := range data {
-		fmt.Fprintf(&pts, "%.1f,%.1f ", scaleX(pt.T), scaleY(pt.V))
-	}
-	fmt.Fprintf(w, `<polyline points="%s" fill="none" stroke="#89b4fa" stroke-width="1.5" stroke-linejoin="round"/>`,
-		strings.TrimSpace(pts.String()))
-	fmt.Fprintln(w)
-
-	// x-axis labels (up to 10 ticks)
-	ticks := xTicks(minT, maxT, 10)
-	timeFmt := xTimeFmt(maxT.Sub(minT))
-	for _, t := range ticks {
-		tx := scaleX(t)
-		if tx < float64(padLeft) || tx > float64(padLeft+plotW) {
-			continue
-		}
-		fmt.Fprintf(w, `<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="#45475a" stroke-width="0.5"/>`,
-			tx, py+plotH, tx, py+plotH+4)
-		fmt.Fprintln(w)
-		label := t.Format(timeFmt)
-		fmt.Fprintf(w, `<text x="%.1f" y="%d" text-anchor="middle" font-family="monospace" font-size="8" fill="#6c7086" transform="rotate(-30,%.1f,%d)">%s</text>`,
-			tx, py+plotH+14, tx, py+plotH+14, label)
-		fmt.Fprintln(w)
-	}
-}
-
-func xTicks(minT, maxT time.Time, n int) []time.Time {
-	if minT.Equal(maxT) {
-		return []time.Time{minT}
-	}
-	d := maxT.Sub(minT) / time.Duration(n)
-	var ticks []time.Time
-	for i := 0; i <= n; i++ {
-		ticks = append(ticks, minT.Add(time.Duration(i)*d))
-	}
-	return ticks
-}
-
-func xTimeFmt(d time.Duration) string {
-	if d < 24*time.Hour {
-		return "15:04"
-	}
-	return "01-02 15:04"
-}
-
-// LoadCSV reads a nstat CSV file and returns the points, optionally filtering
-// to the last `hours` hours (0 = all).
-func LoadCSV(path string, hours float64) ([]Point, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	r := csv.NewReader(f)
-	r.Read() // skip header
-
-	var cutoff *time.Time
-	if hours > 0 {
-		cutoff = new(time.Now().Add(-time.Duration(hours * float64(time.Hour))))
-	}
-
-	var pts []Point
-	for {
-		rec, err := r.Read()
-		if err != nil {
-			break
-		}
-		if len(rec) < 3 {
-			continue
-		}
-		t, err := time.ParseInLocation("2006-01-02 15:04:05", strings.TrimSpace(rec[1]), time.Local)
-		if err != nil {
-			continue
-		}
-		var v float64
-		fmt.Sscanf(strings.TrimSpace(rec[2]), "%f", &v)
-		if cutoff != nil && t.Before(*cutoff) {
-			continue
-		}
-		pts = append(pts, Point{T: t, V: v})
-	}
-	return pts, nil
+	Cutoff *time.Time
 }
 
 // PanelDef describes a panel to render in the graph.
@@ -297,37 +51,332 @@ var DefaultPanels = []PanelDef{
 	{"DHCP Ping", "csv_dhcp.csv", "ms", 10, 50},
 }
 
-// sampleData reduces the number of points to at most maxPts using LTTB-like sampling.
-// Preserves peaks and valleys for accurate visualization.
+// Generate writes an interactive HTML dashboard to outputPath.
+func Generate(panels []Panel, opts Options, outputPath string) error {
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Filter panels with data
+	var activePanels []Panel
+	for _, p := range panels {
+		if len(p.Data) > 0 {
+			activePanels = append(activePanels, p)
+		}
+	}
+
+	if len(activePanels) == 0 {
+		return fmt.Errorf("no data to graph")
+	}
+
+	// Write HTML header
+	fmt.Fprint(f, htmlHeader(opts.Title))
+
+	// Write data as JSON
+	fmt.Fprintln(f, "<script>")
+	fmt.Fprintln(f, "const panelData = [")
+	for i, p := range activePanels {
+		writeJSONPanel(f, p, i == len(activePanels)-1)
+	}
+	fmt.Fprintln(f, "];")
+	fmt.Fprintln(f, "</script>")
+
+	// Write Plotly rendering code
+	fmt.Fprint(f, htmlPlotlyCode(len(activePanels)))
+
+	// Write HTML footer
+	fmt.Fprint(f, htmlFooter())
+
+	return nil
+}
+
+func writeJSONPanel(f *os.File, p Panel, isLast bool) {
+	// Sample data if too large
+	data := sampleData(p.Data, 3000)
+
+	fmt.Fprintf(f, `  {name: %q, unit: %q, warn: %v, crit: %v, x: [`, p.Name, p.Unit, p.Warn, p.Crit)
+
+	// Write timestamps
+	for i, pt := range data {
+		if i > 0 {
+			fmt.Fprint(f, ",")
+		}
+		fmt.Fprintf(f, `"%s"`, pt.T.Format("2006-01-02 15:04:05"))
+	}
+	fmt.Fprint(f, "], y: [")
+
+	// Write values
+	for i, pt := range data {
+		if i > 0 {
+			fmt.Fprint(f, ",")
+		}
+		fmt.Fprintf(f, "%.4f", pt.V)
+	}
+	fmt.Fprint(f, "]}")
+
+	if !isLast {
+		fmt.Fprintln(f, ",")
+	} else {
+		fmt.Fprintln(f, "")
+	}
+}
+
+func htmlHeader(title string) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>%s</title>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      padding: 16px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.4em;
+      margin-bottom: 8px;
+      color: #89b4fa;
+    }
+    .controls {
+      text-align: center;
+      margin-bottom: 12px;
+    }
+    .controls button {
+      background: #313244;
+      border: 1px solid #45475a;
+      color: #cdd6f4;
+      padding: 6px 14px;
+      margin: 0 4px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9em;
+    }
+    .controls button:hover { background: #45475a; }
+    .controls button.active { background: #89b4fa; color: #1e1e2e; }
+    #dashboard { width: 100%%; }
+    .panel {
+      background: #181825;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      padding: 8px;
+    }
+    .panel-title {
+      font-size: 0.85em;
+      color: #a6adc8;
+      margin-bottom: 4px;
+      padding-left: 8px;
+    }
+    .plot { width: 100%%; height: 180px; }
+    .footer {
+      text-align: center;
+      font-size: 0.75em;
+      color: #6c7086;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>%s</h1>
+  <div class="controls">
+    <button onclick="setRange(1)">1h</button>
+    <button onclick="setRange(6)">6h</button>
+    <button onclick="setRange(24)">24h</button>
+    <button onclick="setRange(72)">3d</button>
+    <button onclick="setRange(168)">7d</button>
+    <button onclick="setRange(0)" class="active">All</button>
+    <button onclick="resetZoom()">Reset Zoom</button>
+  </div>
+  <div id="dashboard"></div>
+`, title, title)
+}
+
+func htmlPlotlyCode(numPanels int) string {
+	return `<script>
+const plots = [];
+const colors = {
+  line: '#89b4fa',
+  fill: 'rgba(137, 180, 250, 0.15)',
+  warn: '#f9e2af',
+  crit: '#f38ba8',
+  grid: '#313244',
+  bg: '#181825',
+  paper: '#1e1e2e',
+  text: '#cdd6f4'
+};
+
+function createPlots() {
+  const dashboard = document.getElementById('dashboard');
+
+  panelData.forEach((panel, idx) => {
+    const div = document.createElement('div');
+    div.className = 'panel';
+    div.innerHTML = '<div class="panel-title">' + panel.name + ' (' + panel.unit + ')</div><div id="plot' + idx + '" class="plot"></div>';
+    dashboard.appendChild(div);
+
+    const trace = {
+      x: panel.x,
+      y: panel.y,
+      type: 'scatter',
+      mode: 'lines',
+      name: panel.name,
+      line: { color: colors.line, width: 1.5 },
+      fill: 'tozeroy',
+      fillcolor: colors.fill,
+      hovertemplate: '%{y:.2f} ' + panel.unit + '<extra>%{x}</extra>'
+    };
+
+    const shapes = [];
+
+    // Warning threshold line
+    if (panel.warn > 0 && panel.warn !== panel.crit) {
+      shapes.push({
+        type: 'line',
+        xref: 'paper', x0: 0, x1: 1,
+        yref: 'y', y0: panel.warn, y1: panel.warn,
+        line: { color: colors.warn, width: 1, dash: 'dash' }
+      });
+    }
+
+    // Critical threshold line
+    if (panel.crit > 0) {
+      shapes.push({
+        type: 'line',
+        xref: 'paper', x0: 0, x1: 1,
+        yref: 'y', y0: panel.crit, y1: panel.crit,
+        line: { color: colors.crit, width: 1, dash: 'dash' }
+      });
+    }
+
+    const layout = {
+      margin: { l: 60, r: 20, t: 10, b: 30 },
+      paper_bgcolor: colors.paper,
+      plot_bgcolor: colors.bg,
+      font: { color: colors.text, size: 10 },
+      xaxis: {
+        type: 'date',
+        gridcolor: colors.grid,
+        linecolor: colors.grid,
+        tickformat: '%H:%M',
+        hoverformat: '%Y-%m-%d %H:%M:%S'
+      },
+      yaxis: {
+        gridcolor: colors.grid,
+        linecolor: colors.grid,
+        title: { text: panel.unit, standoff: 5 },
+        rangemode: 'tozero'
+      },
+      shapes: shapes,
+      hovermode: 'x unified',
+      showlegend: false
+    };
+
+    const config = {
+      responsive: true,
+      displayModeBar: true,
+      modeBarButtonsToRemove: ['lasso2d', 'select2d', 'autoScale2d'],
+      displaylogo: false
+    };
+
+    Plotly.newPlot('plot' + idx, [trace], layout, config);
+    plots.push(document.getElementById('plot' + idx));
+  });
+
+  // Sync zoom/pan across all plots
+  plots.forEach((plot, idx) => {
+    plot.on('plotly_relayout', (eventData) => {
+      if (eventData['xaxis.autorange'] || eventData['xaxis.range[0]'] !== undefined) {
+        const xRange = eventData['xaxis.range[0]'] ?
+          [eventData['xaxis.range[0]'], eventData['xaxis.range[1]']] : null;
+
+        plots.forEach((otherPlot, otherIdx) => {
+          if (otherIdx !== idx) {
+            const update = xRange ?
+              { 'xaxis.range': xRange } :
+              { 'xaxis.autorange': true };
+            Plotly.relayout(otherPlot, update);
+          }
+        });
+      }
+    });
+  });
+}
+
+function setRange(hours) {
+  // Update button states
+  document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  if (hours === 0) {
+    // Show all data
+    plots.forEach(plot => {
+      Plotly.relayout(plot, { 'xaxis.autorange': true });
+    });
+  } else {
+    const now = new Date();
+    const start = new Date(now.getTime() - hours * 60 * 60 * 1000);
+    const range = [start.toISOString(), now.toISOString()];
+
+    plots.forEach(plot => {
+      Plotly.relayout(plot, { 'xaxis.range': range });
+    });
+  }
+}
+
+function resetZoom() {
+  plots.forEach(plot => {
+    Plotly.relayout(plot, {
+      'xaxis.autorange': true,
+      'yaxis.autorange': true
+    });
+  });
+}
+
+createPlots();
+</script>
+`
+}
+
+func htmlFooter() string {
+	return fmt.Sprintf(`  <div class="footer">
+    Generated by nstat · %s
+  </div>
+</body>
+</html>
+`, time.Now().Format("2006-01-02 15:04:05"))
+}
+
+// sampleData reduces data points using LTTB algorithm for visual fidelity.
 func sampleData(data []Point, maxPts int) []Point {
 	if len(data) <= maxPts {
 		return data
 	}
 
-	// Use largest triangle three buckets (LTTB) inspired sampling
-	// to preserve visual fidelity while reducing points
 	result := make([]Point, 0, maxPts)
-	result = append(result, data[0]) // always keep first point
+	result = append(result, data[0])
 
 	bucketSize := float64(len(data)-2) / float64(maxPts-2)
 
 	for i := 1; i < maxPts-1; i++ {
-		// Calculate bucket boundaries
 		bucketStart := int(float64(i-1)*bucketSize) + 1
 		bucketEnd := int(float64(i)*bucketSize) + 1
 		if bucketEnd > len(data)-1 {
 			bucketEnd = len(data) - 1
 		}
 
-		// Find the point in this bucket that creates the largest triangle
-		// with the previous selected point and the average of the next bucket
 		nextBucketStart := bucketEnd
 		nextBucketEnd := int(float64(i+1)*bucketSize) + 1
 		if nextBucketEnd > len(data) {
 			nextBucketEnd = len(data)
 		}
 
-		// Calculate average of next bucket
 		var avgT, avgV float64
 		for j := nextBucketStart; j < nextBucketEnd; j++ {
 			avgT += float64(data[j].T.Unix())
@@ -339,13 +388,11 @@ func sampleData(data []Point, maxPts int) []Point {
 			avgV /= nextCount
 		}
 
-		// Find max area point in current bucket
 		prevPt := result[len(result)-1]
 		maxArea := -1.0
 		var maxPt Point
 		for j := bucketStart; j < bucketEnd; j++ {
 			pt := data[j]
-			// Calculate triangle area
 			area := triangleArea(
 				float64(prevPt.T.Unix()), prevPt.V,
 				float64(pt.T.Unix()), pt.V,
@@ -361,7 +408,7 @@ func sampleData(data []Point, maxPts int) []Point {
 		}
 	}
 
-	result = append(result, data[len(data)-1]) // always keep last point
+	result = append(result, data[len(data)-1])
 	return result
 }
 
@@ -371,6 +418,46 @@ func triangleArea(x1, y1, x2, y2, x3, y3 float64) float64 {
 		area = -area
 	}
 	return area
+}
+
+// LoadCSV reads a nstat CSV file and returns the points.
+func LoadCSV(path string, hours float64) ([]Point, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	r := csv.NewReader(f)
+	r.Read() // skip header
+
+	var cutoff *time.Time
+	if hours > 0 {
+		t := time.Now().Add(-time.Duration(hours * float64(time.Hour)))
+		cutoff = &t
+	}
+
+	var pts []Point
+	for {
+		rec, err := r.Read()
+		if err != nil {
+			break
+		}
+		if len(rec) < 3 {
+			continue
+		}
+		t, err := time.ParseInLocation("2006-01-02 15:04:05", strings.TrimSpace(rec[1]), time.Local)
+		if err != nil {
+			continue
+		}
+		var v float64
+		fmt.Sscanf(strings.TrimSpace(rec[2]), "%f", &v)
+		if cutoff != nil && t.Before(*cutoff) {
+			continue
+		}
+		pts = append(pts, Point{T: t, V: v})
+	}
+	return pts, nil
 }
 
 // BuildPanels loads CSV data for each panel definition from the given data directory.

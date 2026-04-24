@@ -44,5 +44,5 @@ func Graph(args []string) {
 
 	fmt.Printf("\033[92mgraph saved: \033[1m%s\033[0m\n", cfg.GraphFile)
 
-	openSVG(cfg.GraphFile)
+	openHTML(cfg.GraphFile)
 }
