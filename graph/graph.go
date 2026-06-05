@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -96,24 +97,28 @@ func writeJSONPanel(f *os.File, p Panel, isLast bool) {
 	// Sample data if too large
 	data := sampleData(p.Data, 3000)
 
+	// Build x/y token lists in lockstep, inserting a null break wherever the
+	// daemon stopped sampling for a while (e.g. the machine was off). The null
+	// makes Plotly leave a gap instead of drawing an interpolated line across
+	// the missing period.
+	gap := gapThreshold(data)
+	var xs, ys []string
+	var last time.Time
+	for i, pt := range data {
+		if i > 0 && gap > 0 && pt.T.Sub(last) > gap {
+			mid := last.Add(pt.T.Sub(last) / 2)
+			xs = append(xs, fmt.Sprintf("%q", mid.Format("2006-01-02 15:04:05")))
+			ys = append(ys, "null")
+		}
+		xs = append(xs, fmt.Sprintf("%q", pt.T.Format("2006-01-02 15:04:05")))
+		ys = append(ys, fmt.Sprintf("%.4f", pt.V))
+		last = pt.T
+	}
+
 	fmt.Fprintf(f, `  {name: %q, unit: %q, warn: %v, crit: %v, x: [`, p.Name, p.Unit, p.Warn, p.Crit)
-
-	// Write timestamps
-	for i, pt := range data {
-		if i > 0 {
-			fmt.Fprint(f, ",")
-		}
-		fmt.Fprintf(f, `"%s"`, pt.T.Format("2006-01-02 15:04:05"))
-	}
+	fmt.Fprint(f, strings.Join(xs, ","))
 	fmt.Fprint(f, "], y: [")
-
-	// Write values
-	for i, pt := range data {
-		if i > 0 {
-			fmt.Fprint(f, ",")
-		}
-		fmt.Fprintf(f, "%.4f", pt.V)
-	}
+	fmt.Fprint(f, strings.Join(ys, ","))
 	fmt.Fprint(f, "]}")
 
 	if !isLast {
@@ -121,6 +126,31 @@ func writeJSONPanel(f *os.File, p Panel, isLast bool) {
 	} else {
 		fmt.Fprintln(f, "")
 	}
+}
+
+// gapThreshold returns the time delta above which two consecutive samples are
+// treated as a data gap (daemon not running) rather than a normal sampling
+// interval. It is derived from the data's own median spacing so it adapts to
+// the configured interval and to downsampling, then scaled up so ordinary
+// jitter never trips it. Returns 0 when there are too few points to tell,
+// which disables gap detection.
+func gapThreshold(pts []Point) time.Duration {
+	if len(pts) < 3 {
+		return 0
+	}
+	deltas := make([]time.Duration, 0, len(pts)-1)
+	for i := 1; i < len(pts); i++ {
+		if d := pts[i].T.Sub(pts[i-1].T); d > 0 {
+			deltas = append(deltas, d)
+		}
+	}
+	if len(deltas) == 0 {
+		return 0
+	}
+	sort.Slice(deltas, func(i, j int) bool { return deltas[i] < deltas[j] })
+	median := deltas[len(deltas)/2]
+	// Break the line at gaps larger than ~4 typical intervals.
+	return 4 * median
 }
 
 func htmlHeader(title string) string {
@@ -228,6 +258,7 @@ function createPlots() {
       mode: 'lines',
       name: panel.name,
       line: { color: colors.line, width: 1.5 },
+      connectgaps: false,
       fill: 'tozeroy',
       fillcolor: colors.fill,
       hovertemplate: '%{y:.2f} ' + panel.unit + '<extra>%{x}</extra>'
