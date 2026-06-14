@@ -17,9 +17,23 @@ A lightweight network connection reliability monitor that runs as a background d
 
 ## Installation
 
-### Download a pre-built binary
+### Quick install (Linux & macOS, any architecture)
 
-Go to the [Releases page](../../releases) and download the binary for your platform:
+Copy-paste this single line into your terminal. It auto-detects your OS (Linux or
+macOS) and CPU architecture (x86-64 or ARM64), downloads the latest release, and
+installs it to `/usr/local/bin/nstat`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/amine-khemissi/nstat/main/install.sh | sh
+```
+
+> Requires `curl`. Override the target with `INSTALL_DIR` or pin a release with
+> `VERSION`, e.g. `curl -fsSL .../install.sh | INSTALL_DIR=$HOME/.local/bin VERSION=v0.0.5 sh`.
+
+### Download a pre-built binary manually
+
+Alternatively, go to the [Releases page](../../releases) and download the binary
+for your platform:
 
 | Platform | File |
 |---|---|
@@ -29,13 +43,8 @@ Go to the [Releases page](../../releases) and download the binary for your platf
 | macOS Apple Silicon (M1/M2/M3) | `nstat-darwin-arm64` |
 | Windows x86-64 | `nstat-windows-amd64.exe` |
 
-**Linux / macOS:**
-```sh
-# replace <version> and <platform> with the values for your system
-curl -L https://github.com/<owner>/nstat/releases/download/<version>/nstat-<platform> -o nstat
-chmod +x nstat
-sudo mv nstat /usr/local/bin/
-```
+**Linux / macOS:** `chmod +x` the downloaded file and move it onto your `PATH`
+(e.g. `sudo mv nstat-linux-amd64 /usr/local/bin/nstat`).
 
 **Windows:** download the `.exe` and place it somewhere on your `PATH`.
 
