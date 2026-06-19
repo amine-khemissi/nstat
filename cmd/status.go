@@ -145,7 +145,7 @@ func Status() {
 	}{
 		{fmt.Sprintf("DNS %s", s.DNSServer), dnsValue(s), dim.ScoreOf(s.DNSLastMs, s.DNSLastOK, 100, 500)},
 		{fmt.Sprintf("Gateway %s", s.GatewayServer), gatewayValue(s), dim.ScoreOf(s.GatewayLastMs, s.GatewayLastOK, 10, 50)},
-		{dhcpName(s), dim.DHCPLeaseDisplay(s.DHCPLeaseExpiry, s.DHCPLeaseAvail, time.Now()), dim.DHCPLeaseScore(s.DHCPLeaseExpiry, s.DHCPLeaseTime, s.DHCPLeaseAvail, time.Now())},
+		{dhcpName(s), dim.DHCPLeaseDisplay(s.DHCPLeaseExpiry, s.DHCPLeaseTime, s.DHCPLeaseAvail, time.Now()), dim.DHCPLeaseScore(s.DHCPLeaseExpiry, s.DHCPLeaseTime, s.DHCPLeaseAvail, time.Now())},
 		{"Outages/1h", fmt.Sprintf("%d  (%d total)", outages1h, s.OutageCount), dim.ScoreOf(float64(outages1h), true, 1, 3)},
 	}...)
 

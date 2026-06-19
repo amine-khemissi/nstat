@@ -64,7 +64,9 @@ func (d *DHCPLease) CritThreshold() float64 { return 0 }
 
 func (d *DHCPLease) Score() Score { return DHCPLeaseScore(d.expiry, d.leaseTime, d.avail, d.now()) }
 
-func (d *DHCPLease) DisplayValue() string { return DHCPLeaseDisplay(d.expiry, d.avail, d.now()) }
+func (d *DHCPLease) DisplayValue() string {
+	return DHCPLeaseDisplay(d.expiry, d.leaseTime, d.avail, d.now())
+}
 
 // DHCPLeaseScore scores a lease by time remaining. Shared with `nstat status`
 // (which renders from the persisted snapshot, not the live dimension).
@@ -83,14 +85,34 @@ func DHCPLeaseScore(expiry, leaseTime int64, avail bool, now time.Time) Score {
 	}
 }
 
-// DHCPLeaseDisplay renders the lease state for the status table.
-func DHCPLeaseDisplay(expiry int64, avail bool, now time.Time) string {
+// DHCPLeaseDisplay renders the lease state as a status word for the status
+// table (valid / renewing / EXPIRED / n/a), mirroring DHCPLeaseScore. The
+// actual time remaining is tracked in the graph (see Value) and the daemon log
+// (see DHCPLeaseRemaining).
+func DHCPLeaseDisplay(expiry, leaseTime int64, avail bool, now time.Time) string {
+	if !avail || expiry == 0 {
+		return "n/a"
+	}
+	rem := expiry - now.Unix()
+	switch {
+	case rem <= 0:
+		return "EXPIRED"
+	case leaseTime > 0 && rem < leaseTime/10:
+		return "renewing"
+	default:
+		return "valid"
+	}
+}
+
+// DHCPLeaseRemaining renders the human-readable time left on the lease, used in
+// the daemon log (the status table shows the word from DHCPLeaseDisplay).
+func DHCPLeaseRemaining(expiry int64, avail bool, now time.Time) string {
 	if !avail || expiry == 0 {
 		return "n/a"
 	}
 	rem := time.Duration(expiry-now.Unix()) * time.Second
 	if rem <= 0 {
-		return "EXPIRED"
+		return "expired"
 	}
 	return fmt.Sprintf("%s left", fmtLeaseDur(rem))
 }

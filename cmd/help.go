@@ -46,9 +46,9 @@ func Help() {
                  Good: <100ms  Warn: 100–500ms  Crit: failed
   Gateway <ip>   ICMP ping to your default gateway, auto re-detected (LAN health)
                  Good: <10ms  Warn: 10–50ms  Crit: failed
-  DHCP <ip>      time left on the current DHCP lease (server + expiry read
-                 from the system; not a ping). "n/a" if no lease source
-                 Good: >10%% left  Warn: <10%% left  Crit: expired
+  DHCP <ip>      current DHCP lease state — server + expiry read from the
+                 system, not a ping (graph tracks time left). "n/a" if no source
+                 Good: valid  Warn: renewing  Crit: expired
   Outages/1h     distinct outage events (3+ consecutive losses) in the last hour
                  Good: 0  Warn: 1  Crit: ≥3
   Overall        worst score across all dimensions

@@ -451,7 +451,7 @@ func doLANChecks(
 	snap.DHCPLeaseTime = leaseTime
 	snap.DHCPLeaseAvail = avail
 	if avail {
-		logf("DHCP lease  %s  %s", server, dim.DHCPLeaseDisplay(expiry, avail, time.Now()))
+		logf("DHCP lease  %s  %s", server, dim.DHCPLeaseRemaining(expiry, avail, time.Now()))
 	}
 	appendCSV(cfg, dims[10], now) // dhcp lease
 }

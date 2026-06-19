@@ -14,7 +14,7 @@ A lightweight network connection reliability monitor that runs as a background d
 | MTU | Path MTU to 8.8.8.8, probed with the Don't-Fragment bit | ≥ 1400 / < 1400 / < 1200 |
 | DNS | Resolution time via your DNS server (auto re-detected) | < 100 ms / 100–500 ms / failed |
 | Gateway | ICMP ping to your default gateway, auto re-detected (LAN health) | < 10 ms / 10–50 ms / failed |
-| DHCP lease | Time left on the current DHCP lease (server + expiry read from the system) | > 10% left / < 10% left / expired |
+| DHCP lease | Current lease state — server + expiry read from the system (graph tracks time left) | valid / renewing / expired |
 | Outages/1h | Distinct outage events (≥ 3 consecutive losses) in the last hour | 0 / 1–2 / ≥ 3 |
 
 Notes:
@@ -29,10 +29,11 @@ Notes:
   servers.
 - **DHCP lease** is a real lease check, not a ping: it reads the DHCP server
   identifier and expiry from the system DHCP client — NetworkManager (`nmcli`),
-  then systemd-networkd, then ISC dhclient lease files. The value is the time
-  **remaining** until the lease expires; a healthy client renews around the
-  halfway mark, so a value that keeps counting down toward zero means renewal
-  is failing. If no lease source is found it shows `n/a` (not an error).
+  then systemd-networkd, then ISC dhclient lease files. The status row shows the
+  lease **state** (`valid` / `renewing` / `EXPIRED`, or `n/a` if no source); the
+  graph tracks the actual hours **remaining**. A healthy client renews around the
+  halfway mark, so a lease that drops below 10% remaining (`renewing`) or hits
+  zero (`EXPIRED`) means renewal is failing.
 
 ## Installation
 
