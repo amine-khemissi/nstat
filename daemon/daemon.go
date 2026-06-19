@@ -40,11 +40,12 @@ func Run(cfg *config.Config) {
 	tcpLoss := dim.NewTCPLoss(tcpStats)
 	dnsServer := detectDNS()
 	dns := dim.NewDNS(dnsServer)
-	gateway, err := detectGateway()
+	gatewayIP, err := detectGateway()
 	if err != nil {
-		gateway = ""
+		gatewayIP = ""
 	}
-	dhcp := dim.NewDHCP(gateway)
+	gateway := dim.NewGateway(gatewayIP)
+	dhcpLease := dim.NewDHCPLease()
 	outages := dim.NewOutages()
 
 	// Multi-target TCP tracking
@@ -71,9 +72,9 @@ func Run(cfg *config.Config) {
 	pingObs := []dim.PingObserver{ps, lossStats}
 	tcpObs := []dim.TCPObserver{tcpStats}
 	dnsObs := []dim.DNSObserver{dns}
-	dhcpObs := []dim.DHCPObserver{dhcp}
+	gatewayObs := []dim.GatewayObserver{gateway}
 
-	dims := []dim.Dimension{rtt, jitter, pl, tc, tcpLoss, dns, dhcp, outages, tcpRetrans, tcpErrors}
+	dims := []dim.Dimension{rtt, jitter, pl, tc, tcpLoss, dns, gateway, outages, tcpRetrans, tcpErrors, dhcpLease}
 
 	// --- state snapshot used by `nstat status` ------------------------------
 	// Initialize per-target state
@@ -90,16 +91,16 @@ func Run(cfg *config.Config) {
 	tcpTuning, _ := ReadTCPTuning()
 
 	snap := &state.State{
-		SessionStart: time.Now().Unix(),
-		PingInterval: int(cfg.PingInterval.Seconds()),
-		LANInterval:  int(cfg.LANInterval.Seconds()),
-		RTTWindow:    cfg.RTTWindow,
-		DNSServer:    dnsServer,
-		DHCPServer:   gateway,
-		TCPLastOK:    true,
-		DNSLastOK:    true,
-		DHCPLastOK:   true,
-		TCPTargets:   tcpTargetStates,
+		SessionStart:  time.Now().Unix(),
+		PingInterval:  int(cfg.PingInterval.Seconds()),
+		LANInterval:   int(cfg.LANInterval.Seconds()),
+		RTTWindow:     cfg.RTTWindow,
+		DNSServer:     dnsServer,
+		GatewayServer: gatewayIP,
+		TCPLastOK:     true,
+		DNSLastOK:     true,
+		GatewayLastOK: true,
+		TCPTargets:    tcpTargetStates,
 	}
 
 	// Store TCP tuning in state
@@ -121,7 +122,7 @@ func Run(cfg *config.Config) {
 
 	logf("daemon started  ping:%s  interval:%ds  window:%d  tcp:%s:%d  dns:%s  dhcp:%s  pid:%d",
 		cfg.PingTarget, int(cfg.PingInterval.Seconds()), cfg.RTTWindow,
-		cfg.TCPHost, cfg.TCPPort, dnsServer, gateway, os.Getpid())
+		cfg.TCPHost, cfg.TCPPort, dnsServer, gatewayIP, os.Getpid())
 
 	// --- signal handler -----------------------------------------------------
 	sigs := make(chan os.Signal, 1)
@@ -135,7 +136,7 @@ func Run(cfg *config.Config) {
 	}()
 
 	// --- initial LAN check --------------------------------------------------
-	doLANChecks(cfg, dns, dhcp, tcpObs, dnsObs, dhcpObs, snap, logf, dims, tcpMulti, mtuProbeD, kernelStats)
+	doLANChecks(cfg, dns, gateway, dhcpLease, tcpObs, dnsObs, gatewayObs, snap, logf, dims, tcpMulti, mtuProbeD, kernelStats)
 	lastLAN := time.Now()
 
 	// --- main loop ----------------------------------------------------------
@@ -245,7 +246,7 @@ func Run(cfg *config.Config) {
 
 		// ── LAN checks every LANInterval ───────────────────────────────────
 		if time.Since(lastLAN) >= cfg.LANInterval {
-			doLANChecks(cfg, dns, dhcp, tcpObs, dnsObs, dhcpObs, snap, logf, dims, tcpMulti, mtuProbeD, kernelStats)
+			doLANChecks(cfg, dns, gateway, dhcpLease, tcpObs, dnsObs, gatewayObs, snap, logf, dims, tcpMulti, mtuProbeD, kernelStats)
 			lastLAN = time.Now()
 		}
 
@@ -263,8 +264,8 @@ func Run(cfg *config.Config) {
 
 func doLANChecks(
 	cfg *config.Config,
-	dns *dim.DNS, dhcp *dim.DHCP,
-	tcpObs []dim.TCPObserver, dnsObs []dim.DNSObserver, dhcpObs []dim.DHCPObserver,
+	dns *dim.DNS, gateway *dim.Gateway, dhcpLease *dim.DHCPLease,
+	tcpObs []dim.TCPObserver, dnsObs []dim.DNSObserver, gatewayObs []dim.GatewayObserver,
 	snap *state.State,
 	logf func(string, ...any),
 	dims []dim.Dimension,
@@ -397,6 +398,19 @@ func doLANChecks(
 		appendCSV(cfg, dims[9], now) // tcp errors
 	}
 
+	// Re-detect network-specific targets so the daemon follows the laptop onto
+	// new networks instead of probing the previous one's DNS/gateway forever.
+	if cur := detectDNS(); cur != "" && cur != dns.Server() {
+		logf("DNS server changed: %s -> %s", dns.Server(), cur)
+		dns.SetServer(cur)
+	}
+	if gw, gerr := detectGateway(); gerr == nil && gw != "" && gw != gateway.Server() {
+		logf("gateway changed: %s -> %s", gateway.Server(), gw)
+		gateway.SetServer(gw)
+	}
+	snap.DNSServer = dns.Server()
+	snap.GatewayServer = gateway.Server()
+
 	// DNS
 	dnsMs, err := dnsCheck(dns.Server(), 2*time.Second)
 	ok := err == nil
@@ -412,22 +426,34 @@ func doLANChecks(
 	}
 	appendCSV(cfg, dims[5], now) // dns
 
-	// DHCP
-	if dhcp.Server() != "" {
-		dhcpMs, err := pingOnce(dhcp.Server(), 2*time.Second)
-		ok = err == nil
-		for _, o := range dhcpObs {
-			o.OnDHCPResult(ok, dhcpMs)
+	// Gateway reachability (ICMP ping of the default gateway)
+	if gateway.Server() != "" {
+		gwMs, gerr := pingOnce(gateway.Server(), 2*time.Second)
+		ok = gerr == nil
+		for _, o := range gatewayObs {
+			o.OnGatewayResult(ok, gwMs)
 		}
-		snap.DHCPLastMs = dims[6].Value()
-		snap.DHCPLastOK = ok
+		snap.GatewayLastMs = dims[6].Value()
+		snap.GatewayLastOK = ok
 		if !ok {
-			logf("DHCP FAIL %s", dhcp.Server())
+			logf("GATEWAY FAIL %s", gateway.Server())
 		} else {
-			logf("DHCP OK   %s  ping=%.0fms", dhcp.Server(), dhcpMs)
+			logf("GATEWAY OK   %s  ping=%.0fms", gateway.Server(), gwMs)
 		}
 	}
-	appendCSV(cfg, dims[6], now) // dhcp
+	appendCSV(cfg, dims[6], now) // gateway
+
+	// DHCP lease status (read from the system DHCP client; not an active probe)
+	server, expiry, leaseTime, avail := readDHCPLease()
+	dhcpLease.OnLease(server, expiry, leaseTime, avail)
+	snap.DHCPServer = server
+	snap.DHCPLeaseExpiry = expiry
+	snap.DHCPLeaseTime = leaseTime
+	snap.DHCPLeaseAvail = avail
+	if avail {
+		logf("DHCP lease  %s  %s", server, dim.DHCPLeaseDisplay(expiry, avail, time.Now()))
+	}
+	appendCSV(cfg, dims[10], now) // dhcp lease
 }
 
 func appendCSV(cfg *config.Config, d dim.Dimension, t time.Time) {

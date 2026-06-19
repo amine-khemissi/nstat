@@ -49,7 +49,8 @@ var DefaultPanels = []PanelDef{
 	{"TCP Errors", "csv_tcp_errors.csv", "count", 1, 10},
 	{"MTU", "csv_mtu.csv", "bytes", 1400, 1200},
 	{"DNS Resolve", "csv_dns.csv", "ms", 100, 500},
-	{"DHCP Ping", "csv_dhcp.csv", "ms", 10, 50},
+	{"Gateway", "csv_gateway.csv", "ms", 10, 50},
+	{"DHCP Lease", "csv_dhcp_lease.csv", "h", 2, 0.25}, // hours remaining; lower is worse
 }
 
 // Generate writes an interactive HTML dashboard to outputPath.

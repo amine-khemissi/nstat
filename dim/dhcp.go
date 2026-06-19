@@ -2,17 +2,20 @@ package dim
 
 import "fmt"
 
-type DHCP struct {
+// Gateway measures reachability/latency of the default gateway via ICMP.
+// (This was previously mislabeled "DHCP" — it never spoke DHCP; it pings the
+// gateway. The real DHCP lease check lives in DHCPLease.)
+type Gateway struct {
 	server string
 	lastMs float64
 	lastOK bool
 }
 
-func NewDHCP(server string) *DHCP {
-	return &DHCP{server: server, lastOK: true}
+func NewGateway(server string) *Gateway {
+	return &Gateway{server: server, lastOK: true}
 }
 
-func (d *DHCP) OnDHCPResult(ok bool, ms float64) {
+func (d *Gateway) OnGatewayResult(ok bool, ms float64) {
 	if ok {
 		d.lastMs = ms
 		d.lastOK = true
@@ -22,15 +25,20 @@ func (d *DHCP) OnDHCPResult(ok bool, ms float64) {
 	}
 }
 
-func (d *DHCP) SetServer(s string) { d.server = s }
-func (d *DHCP) Server() string     { return d.server }
+func (d *Gateway) SetServer(s string) { d.server = s }
+func (d *Gateway) Server() string     { return d.server }
 
-func (d *DHCP) Name() string           { return fmt.Sprintf("DHCP %s", d.server) }
-func (d *DHCP) CSVFile() string        { return "csv_dhcp.csv" }
-func (d *DHCP) Unit() string           { return "ms" }
-func (d *DHCP) Value() float64         { return d.lastMs }
-func (d *DHCP) IsOK() bool             { return d.lastOK }
-func (d *DHCP) WarnThreshold() float64 { return 10 }
-func (d *DHCP) CritThreshold() float64 { return 50 }
-func (d *DHCP) Score() Score           { return ScoreOf(d.lastMs, d.lastOK, 10, 50) }
-func (d *DHCP) DisplayValue() string   { return FmtMs(d.lastMs) }
+func (d *Gateway) Name() string           { return fmt.Sprintf("Gateway %s", d.server) }
+func (d *Gateway) CSVFile() string        { return "csv_gateway.csv" }
+func (d *Gateway) Unit() string           { return "ms" }
+func (d *Gateway) Value() float64         { return d.lastMs }
+func (d *Gateway) IsOK() bool             { return d.lastOK }
+func (d *Gateway) WarnThreshold() float64 { return 10 }
+func (d *Gateway) CritThreshold() float64 { return 50 }
+func (d *Gateway) Score() Score           { return ScoreOf(d.lastMs, d.lastOK, 10, 50) }
+func (d *Gateway) DisplayValue() string {
+	if !d.lastOK {
+		return "unreachable"
+	}
+	return FmtMs(d.lastMs)
+}

@@ -77,12 +77,21 @@ type State struct {
 	TCPFinTimeout      int  `json:"tcp_fin_timeout,omitempty"`
 	TCPFastFail        bool `json:"tcp_fast_fail,omitempty"`
 
-	DNSServer    string  `json:"dns_server"`
-	DNSLastMs    float64 `json:"dns_last_ms"`
-	DNSLastOK    bool    `json:"dns_last_ok"`
-	DHCPServer   string  `json:"dhcp_server"`
-	DHCPLastMs   float64 `json:"dhcp_last_ms"`
-	DHCPLastOK   bool    `json:"dhcp_last_ok"`
+	DNSServer string  `json:"dns_server"`
+	DNSLastMs float64 `json:"dns_last_ms"`
+	DNSLastOK bool    `json:"dns_last_ok"`
+
+	// Gateway reachability (ICMP ping of the default gateway)
+	GatewayServer string  `json:"gateway_server,omitempty"`
+	GatewayLastMs float64 `json:"gateway_last_ms,omitempty"`
+	GatewayLastOK bool    `json:"gateway_last_ok,omitempty"`
+
+	// DHCP lease status (read from the system DHCP client)
+	DHCPServer      string `json:"dhcp_server,omitempty"`       // DHCP server identifier
+	DHCPLeaseExpiry int64  `json:"dhcp_lease_expiry,omitempty"` // epoch when the lease expires
+	DHCPLeaseTime   int64  `json:"dhcp_lease_time,omitempty"`   // total lease duration (s)
+	DHCPLeaseAvail  bool   `json:"dhcp_lease_avail,omitempty"`  // lease info readable
+
 	InOutage     bool    `json:"in_outage"`
 	OutageCount  int     `json:"outage_count"`
 	RecentOutage []int64 `json:"recent_outage_ts"`

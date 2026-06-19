@@ -64,9 +64,9 @@ type DNSObserver interface {
 	OnDNSResult(ok bool, ms float64)
 }
 
-// DHCPObserver is implemented by dimensions that react to DHCP server pings.
-type DHCPObserver interface {
-	OnDHCPResult(ok bool, ms float64)
+// GatewayObserver is implemented by dimensions that react to gateway pings.
+type GatewayObserver interface {
+	OnGatewayResult(ok bool, ms float64)
 }
 
 // --- shared helpers ---------------------------------------------------------

@@ -33,4 +33,9 @@ func (d *DNS) IsOK() bool             { return d.lastOK }
 func (d *DNS) WarnThreshold() float64 { return 100 }
 func (d *DNS) CritThreshold() float64 { return 500 }
 func (d *DNS) Score() Score           { return ScoreOf(d.lastMs, d.lastOK, 100, 500) }
-func (d *DNS) DisplayValue() string   { return FmtMs(d.lastMs) }
+func (d *DNS) DisplayValue() string {
+	if !d.lastOK {
+		return "fail"
+	}
+	return FmtMs(d.lastMs)
+}

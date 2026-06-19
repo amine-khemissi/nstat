@@ -5,8 +5,62 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 )
+
+// defaultIface returns the interface carrying the default route, or "".
+func defaultIface() string {
+	data, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n")[1:] {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[1] == "00000000" {
+			return f[0]
+		}
+	}
+	return ""
+}
+
+// readDHCPLease reads the current DHCP lease for the default-route interface via
+// NetworkManager (nmcli). Returns avail=false if NM isn't present or has no
+// lease, so callers degrade gracefully rather than alarming.
+func readDHCPLease() (server string, expiry, leaseTime int64, avail bool) {
+	iface := defaultIface()
+	if iface == "" {
+		return "", 0, 0, false
+	}
+	out, err := exec.Command("nmcli", "-t", "-f", "DHCP4.OPTION", "device", "show", iface).Output()
+	if err != nil {
+		return "", 0, 0, false
+	}
+	sc := bufio.NewScanner(strings.NewReader(string(out)))
+	for sc.Scan() {
+		line := sc.Text()
+		// Format: DHCP4.OPTION[3]:expiry = 1781964619
+		c := strings.Index(line, ":")
+		if c < 0 {
+			continue
+		}
+		kv := strings.SplitN(line[c+1:], "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key, val := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+		switch key {
+		case "dhcp_server_identifier":
+			server = val
+		case "expiry":
+			expiry, _ = strconv.ParseInt(val, 10, 64)
+		case "dhcp_lease_time":
+			leaseTime, _ = strconv.ParseInt(val, 10, 64)
+		}
+	}
+	return server, expiry, leaseTime, expiry > 0
+}
 
 func detectDNS() string {
 	for _, path := range []string{

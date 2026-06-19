@@ -292,9 +292,11 @@ func pingWithSize(ip net.IP, size int, timeout time.Duration) (float64, error) {
 func dnsCheck(server string, timeout time.Duration) (float64, error) {
 	r := &net.Resolver{
 		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			// Force our chosen server, but honor the resolver's transport choice
+			// (it falls back to tcp for truncated/large responses).
 			d := net.Dialer{Timeout: timeout}
-			return d.DialContext(ctx, "udp", net.JoinHostPort(server, "53"))
+			return d.DialContext(ctx, network, net.JoinHostPort(server, "53"))
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

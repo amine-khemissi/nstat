@@ -143,8 +143,9 @@ func Status() {
 		value string
 		score dim.Score
 	}{
-		{fmt.Sprintf("DNS %s", s.DNSServer), fmt.Sprintf("%.1f ms", s.DNSLastMs), dim.ScoreOf(s.DNSLastMs, s.DNSLastOK, 100, 500)},
-		{fmt.Sprintf("DHCP %s", s.DHCPServer), fmt.Sprintf("%.1f ms", s.DHCPLastMs), dim.ScoreOf(s.DHCPLastMs, s.DHCPLastOK, 10, 50)},
+		{fmt.Sprintf("DNS %s", s.DNSServer), dnsValue(s), dim.ScoreOf(s.DNSLastMs, s.DNSLastOK, 100, 500)},
+		{fmt.Sprintf("Gateway %s", s.GatewayServer), gatewayValue(s), dim.ScoreOf(s.GatewayLastMs, s.GatewayLastOK, 10, 50)},
+		{dhcpName(s), dim.DHCPLeaseDisplay(s.DHCPLeaseExpiry, s.DHCPLeaseAvail, time.Now()), dim.DHCPLeaseScore(s.DHCPLeaseExpiry, s.DHCPLeaseTime, s.DHCPLeaseAvail, time.Now())},
 		{"Outages/1h", fmt.Sprintf("%d  (%d total)", outages1h, s.OutageCount), dim.ScoreOf(float64(outages1h), true, 1, 3)},
 	}...)
 
@@ -216,7 +217,8 @@ func overallScore(s *state.State, outages1h int) dim.Score {
 	bump(dim.ScoreOf(s.TCPLastMs, s.TCPLastOK, 150, 150))
 	bump(dim.LossScore(s.TCPLossPct, s.TCPTotal))
 	bump(dim.ScoreOf(s.DNSLastMs, s.DNSLastOK, 100, 500))
-	bump(dim.ScoreOf(s.DHCPLastMs, s.DHCPLastOK, 10, 50))
+	bump(dim.ScoreOf(s.GatewayLastMs, s.GatewayLastOK, 10, 50))
+	bump(dim.DHCPLeaseScore(s.DHCPLeaseExpiry, s.DHCPLeaseTime, s.DHCPLeaseAvail, time.Now()))
 	bump(dim.ScoreOf(float64(outages1h), true, 1, 3))
 	return worst
 }
@@ -253,4 +255,28 @@ func fmtSeconds(secs int) string {
 	default:
 		return fmt.Sprintf("%dh", secs/3600)
 	}
+}
+
+// dnsValue renders the DNS cell ("fail" instead of a misleading 0.0 ms).
+func dnsValue(s *state.State) string {
+	if !s.DNSLastOK {
+		return "fail"
+	}
+	return fmt.Sprintf("%.1f ms", s.DNSLastMs)
+}
+
+// gatewayValue renders the gateway cell.
+func gatewayValue(s *state.State) string {
+	if !s.GatewayLastOK {
+		return "unreachable"
+	}
+	return fmt.Sprintf("%.1f ms", s.GatewayLastMs)
+}
+
+// dhcpName labels the DHCP lease row with the server when known.
+func dhcpName(s *state.State) string {
+	if s.DHCPServer != "" {
+		return fmt.Sprintf("DHCP %s", s.DHCPServer)
+	}
+	return "DHCP lease"
 }

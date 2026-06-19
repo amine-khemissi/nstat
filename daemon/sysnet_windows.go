@@ -131,3 +131,9 @@ func ReadKernelTCPStats() (int64, int64, int64, int64, int64, int64, int64, int6
 
 	return retrans, outSegs, inSegs, inErrs, outRsts, attemptFails, estabResets, currEstab, nil
 }
+
+// readDHCPLease is not implemented on this platform; the DHCP-lease dimension
+// degrades to "n/a".
+func readDHCPLease() (server string, expiry, leaseTime int64, avail bool) {
+	return "", 0, 0, false
+}
