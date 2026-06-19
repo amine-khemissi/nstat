@@ -33,16 +33,22 @@ func Help() {
                  Good: <80ms  Warn: 80–200ms  Crit: >200ms
   Jitter         std dev of RTT (same window)
                  Good: <10ms  Warn: 10–30ms  Crit: >30ms
-  Packet loss    %% pings with no reply since start
+  Packet loss    %% recent pings with no reply (sliding window)
                  Good: <1%%  Warn: 1–5%%  Crit: >5%%
   TCP connect    time for TCP handshake to 8.8.8.8:53
                  Good: <150ms  Crit: failed
-  TCP loss       %% TCP attempts that failed
+  TCP loss       %% recent TCP attempts that timed out — refused/reset
+                 excluded (sliding window)
                  Good: <1%%  Warn: 1–5%%  Crit: >5%%
-  DNS <ip>       time to resolve google.com via your DNS server
+  MTU            path MTU to 8.8.8.8, probed with the Don't-Fragment bit
+                 Good: ≥1400  Warn: <1400  Crit: <1200
+  DNS <ip>       time to resolve via your DNS server (auto re-detected)
                  Good: <100ms  Warn: 100–500ms  Crit: failed
-  DHCP <ip>      ICMP ping to your default gateway (LAN health)
+  Gateway <ip>   ICMP ping to your default gateway, auto re-detected (LAN health)
                  Good: <10ms  Warn: 10–50ms  Crit: failed
+  DHCP <ip>      time left on the current DHCP lease (server + expiry read
+                 from the system; not a ping). "n/a" if no lease source
+                 Good: >10%% left  Warn: <10%% left  Crit: expired
   Outages/1h     distinct outage events (3+ consecutive losses) in the last hour
                  Good: 0  Warn: 1  Crit: ≥3
   Overall        worst score across all dimensions
