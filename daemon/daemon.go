@@ -332,20 +332,21 @@ func doLANChecks(
 	if cfg.MTUEnabled {
 		mtuSize, mtuMs, err := mtuProbe(cfg.PingTarget, 2*time.Second)
 		if err != nil {
-			logf("MTU PROBE failed: %v", err)
-			mtuProbeD.OnMTUResult(0, false, 0)
+			logf("MTU probe failed: %v", err)
+			mtuProbeD.OnMTUError()
+			snap.MTUDetected = 0
 		} else {
-			mtuProbeD.OnMTUResult(mtuSize, true, mtuMs)
-			if mtuProbeD.HasFragmentation() {
-				logf("MTU WARN  detected=%d  failed_sizes=%v", mtuSize, mtuProbeD.FailedSizes)
+			mtuProbeD.OnMTUDetected(mtuSize, mtuMs)
+			if mtuProbeD.HasIssue() {
+				logf("MTU WARN  detected=%d  latency=%.0fms", mtuSize, mtuMs)
 			} else {
 				logf("MTU OK    detected=%d  latency=%.0fms", mtuSize, mtuMs)
 			}
+			snap.MTUDetected = mtuProbeD.DetectedMTU()
 		}
-		snap.MTUDetected = mtuProbeD.DetectedMTU()
 		snap.MTULastMs = mtuProbeD.LastMs
-		snap.MTUHasIssues = mtuProbeD.HasFragmentation()
-		snap.MTUFailedSizes = mtuProbeD.FailedSizes
+		snap.MTUHasIssues = mtuProbeD.HasIssue()
+		snap.MTUFailedSizes = nil
 	}
 
 	// --- Kernel TCP Stats ---

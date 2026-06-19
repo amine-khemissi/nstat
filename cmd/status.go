@@ -120,16 +120,16 @@ func Status() {
 	mtuScore := dim.Good
 	if s.MTUDetected > 0 {
 		mtuValue = fmt.Sprintf("%d bytes", s.MTUDetected)
-		if s.MTUHasIssues {
-			mtuValue = fmt.Sprintf("%d bytes (fragmentation!)", s.MTUDetected)
-			mtuScore = dim.Warn
-		}
-		if s.MTUDetected < 1400 {
-			mtuScore = dim.Warn
-		}
-		if s.MTUDetected < 1200 {
+		switch {
+		case s.MTUDetected < 1200:
 			mtuScore = dim.Crit
+		case s.MTUDetected < 1400:
+			mtuScore = dim.Warn
 		}
+	}
+	if s.MTUHasIssues && s.MTUDetected == 0 {
+		mtuValue = "probe failed"
+		mtuScore = dim.Warn
 	}
 	rows = append(rows, struct {
 		name  string

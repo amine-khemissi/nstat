@@ -156,29 +156,58 @@ func classifyTCPError(err error) dim.TCPFailReason {
 	return dim.TCPFailOther
 }
 
-// MTUSizes defines the packet sizes to test for MTU discovery.
-var MTUSizes = []int{1500, 1472, 1400, 1300, 1200, 576}
+// MTU search bounds (total IPv4 packet size, in bytes).
+const (
+	mtuFloor   = 576  // IPv4 minimum that every path must carry
+	mtuCeiling = 1500 // standard ethernet maximum
+)
 
-// mtuProbe sends ICMP echo with Don't Fragment flag to detect MTU issues.
-// Returns the largest size that succeeded and the latency.
+// mtuProbe measures the true path MTU toward target by binary-searching, with
+// the Don't-Fragment bit set, for the largest ICMP packet that arrives without
+// being fragmented. Returns the detected MTU (total IPv4 packet size) and the
+// round-trip latency measured at that size.
+//
+// The DF bit is what makes this honest: an oversized packet is dropped (ICMP
+// fragmentation-needed) or rejected locally (EMSGSIZE) rather than silently
+// fragmented and counted as a success. This is why it can resolve exact values
+// like 1492 instead of always reporting 1500.
 func mtuProbe(target string, timeout time.Duration) (int, float64, error) {
 	ip, err := resolveIP(target)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	// Try each size from largest to smallest
-	for _, size := range MTUSizes {
-		ms, err := pingWithSize(ip, size, timeout)
-		if err == nil {
-			return size, ms, nil
-		}
+	// The floor must pass; if it doesn't, ICMP is filtered or the host is down
+	// and we can't measure anything meaningful.
+	okLo, msLo, err := dfPing(ip, mtuFloor, timeout)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !okLo {
+		return 0, 0, fmt.Errorf("no reply at %d bytes (ICMP filtered or host unreachable)", mtuFloor)
 	}
 
-	return 0, 0, fmt.Errorf("all MTU sizes failed")
+	best, bestMs := mtuFloor, msLo
+	lo, hi := mtuFloor+1, mtuCeiling
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		ok, ms, err := dfPing(ip, mid, timeout)
+		if err != nil {
+			return 0, 0, err
+		}
+		if ok {
+			best, bestMs = mid, ms
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return best, bestMs, nil
 }
 
-// pingWithSize sends an ICMP echo with a specific payload size.
+// pingWithSize sends an ICMP echo of a specific total size *without* a
+// guaranteed Don't-Fragment bit. It is the fallback used by dfPing on non-Linux
+// platforms (see mtu_other.go); on Linux dfPing forces DF via IP_MTU_DISCOVER.
 func pingWithSize(ip net.IP, size int, timeout time.Duration) (float64, error) {
 	network := "udp4"
 	conn, err := icmp.ListenPacket("udp4", "0.0.0.0")
