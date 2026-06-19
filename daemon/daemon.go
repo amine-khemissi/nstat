@@ -267,10 +267,14 @@ func doLANChecks(
 	now := time.Now()
 
 	// --- TCP checks for all targets ---
+	// Aggregated counters are recomputed each cycle from the per-target sliding
+	// windows, so they reflect the recent past rather than the whole session.
 	snap.TCPTimeoutCount = 0
 	snap.TCPRefusedCount = 0
 	snap.TCPResetCount = 0
 	snap.TCPOtherCount = 0
+	snap.TCPTotal = 0
+	snap.TCPFail = 0
 
 	for i, target := range cfg.TCPTargets {
 		tcpMs, reason, err := tcpCheckWithReason(target.Host, target.Port, 2*time.Second)
@@ -294,11 +298,13 @@ func doLANChecks(
 				snap.TCPTargets[i].ResetCount = t.Stats.ResetCount
 				snap.TCPTargets[i].OtherCount = t.Stats.OtherCount
 
-				// Aggregate failure counts
+				// Aggregate windowed counts across targets
 				snap.TCPTimeoutCount += t.Stats.TimeoutCount
 				snap.TCPRefusedCount += t.Stats.RefusedCount
 				snap.TCPResetCount += t.Stats.ResetCount
 				snap.TCPOtherCount += t.Stats.OtherCount
+				snap.TCPTotal += t.Stats.Total
+				snap.TCPFail += t.Stats.Fail
 			}
 		}
 
@@ -308,23 +314,26 @@ func doLANChecks(
 			logf("TCP OK    %s:%d  connect=%.0fms", target.Host, target.Port, tcpMs)
 		}
 
-		// Primary target updates main state
+		// Primary target updates main state (with the real failure reason so
+		// the loss dimension's breakdown is accurate, not all "other").
 		if i == 0 {
 			for _, o := range tcpObs {
-				o.OnTCPResult(ok, tcpMs)
+				o.OnTCPResultWithReason(ok, tcpMs, reason)
 			}
 			snap.TCPLastMs = tcpMs
 			snap.TCPLastOK = ok
 			snap.TCPLastReason = reason.String()
-			snap.TCPTotal++
-			if !ok {
-				snap.TCPFail++
-			}
-			if snap.TCPTotal > 0 {
-				snap.TCPLossPct = float64(snap.TCPFail) / float64(snap.TCPTotal) * 100
-			}
 		}
 	}
+
+	// Aggregated TCP loss is timeout-only (genuine unreachability); refused /
+	// reset / DNS failures kept the path intact and are excluded here.
+	if snap.TCPTotal > 0 {
+		snap.TCPLossPct = float64(snap.TCPTimeoutCount) / float64(snap.TCPTotal) * 100
+	} else {
+		snap.TCPLossPct = 0
+	}
+
 	appendCSV(cfg, dims[3], now) // tcp connect
 	appendCSV(cfg, dims[4], now) // tcp loss
 

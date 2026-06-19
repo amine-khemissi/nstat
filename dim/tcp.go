@@ -31,16 +31,37 @@ func (r TCPFailReason) String() string {
 	}
 }
 
+// Sliding-window sizing for TCP loss. TCP targets are probed on the LAN
+// interval, so a bounded window reflects the recent past rather than the whole
+// daemon session — loss recovers as old failures age out instead of being a
+// permanent lifetime average.
+const (
+	defaultTCPWindow  = 50
+	minTCPLossSamples = 25 // hold at Good below this many samples (avoids spikes)
+)
+
 // TCPStats holds the shared state for the TCPConnect and TCPLoss dimensions.
+//
+// Loss is measured over a sliding window of the most recent attempts and counts
+// only timeouts — genuine unreachability. A refused/reset/DNS failure means the
+// packet made a round trip (the path works), so it is kept in the breakdown but
+// excluded from the loss percentage.
 type TCPStats struct {
 	LastMs     float64
 	LastOK     bool
 	LastReason TCPFailReason
-	Total      int
-	Fail       int
-	LossPct    float64
 
-	// Failure breakdown
+	// ring buffer of the most recent outcomes (TCPFailNone == success)
+	window []TCPFailReason
+	pos    int
+	filled bool
+
+	// derived from the current window
+	Total   int     // attempts in the window
+	Fail    int     // all failures in the window (any non-None)
+	LossPct float64 // timeout-only loss across the window
+
+	// failure breakdown over the window
 	TimeoutCount int
 	RefusedCount int
 	ResetCount   int
@@ -48,33 +69,77 @@ type TCPStats struct {
 }
 
 func (s *TCPStats) OnTCPResult(ok bool, ms float64) {
-	s.OnTCPResultWithReason(ok, ms, TCPFailNone)
+	reason := TCPFailNone
+	if !ok {
+		reason = TCPFailOther
+	}
+	s.OnTCPResultWithReason(ok, ms, reason)
 }
 
 func (s *TCPStats) OnTCPResultWithReason(ok bool, ms float64, reason TCPFailReason) {
-	s.Total++
-	s.LastReason = reason
 	if ok {
+		reason = TCPFailNone
 		s.LastMs = ms
 		s.LastOK = true
 	} else {
 		s.LastMs = 0
 		s.LastOK = false
-		s.Fail++
-		switch reason {
+	}
+	s.LastReason = reason
+
+	if len(s.window) == 0 {
+		s.window = make([]TCPFailReason, defaultTCPWindow)
+	}
+	s.window[s.pos] = reason
+	s.pos = (s.pos + 1) % len(s.window)
+	if s.pos == 0 {
+		s.filled = true
+	}
+	s.recompute()
+}
+
+// recompute derives the windowed totals and breakdown from the ring buffer.
+func (s *TCPStats) recompute() {
+	n := s.pos
+	if s.filled {
+		n = len(s.window)
+	}
+	s.Total, s.Fail = n, 0
+	s.TimeoutCount, s.RefusedCount, s.ResetCount, s.OtherCount = 0, 0, 0, 0
+	timeouts := 0
+	for i := 0; i < n; i++ {
+		switch s.window[i] {
+		case TCPFailNone:
+			// success
 		case TCPFailTimeout:
+			s.Fail++
 			s.TimeoutCount++
+			timeouts++
 		case TCPFailRefused:
+			s.Fail++
 			s.RefusedCount++
 		case TCPFailReset:
+			s.Fail++
 			s.ResetCount++
-		default:
+		default: // TCPFailDNS, TCPFailOther
+			s.Fail++
 			s.OtherCount++
 		}
 	}
-	if s.Total > 0 {
-		s.LossPct = float64(s.Fail) / float64(s.Total) * 100
+	if n > 0 {
+		s.LossPct = float64(timeouts) / float64(n) * 100
+	} else {
+		s.LossPct = 0
 	}
+}
+
+// TCPLossScore scores a windowed TCP loss percentage, holding at Good until the
+// window has enough samples so a single early timeout can't spike to CRIT.
+func TCPLossScore(lossPct float64, total int) Score {
+	if total < minTCPLossSamples {
+		return Good
+	}
+	return ScoreOf(lossPct, true, 1, 5)
 }
 
 // --- TCPConnect dimension ---------------------------------------------------
@@ -113,9 +178,10 @@ func (t *TCPLoss) Value() float64         { return t.s.LossPct }
 func (t *TCPLoss) IsOK() bool             { return true }
 func (t *TCPLoss) WarnThreshold() float64 { return 1 }
 func (t *TCPLoss) CritThreshold() float64 { return 5 }
-func (t *TCPLoss) Score() Score           { return ScoreOf(t.s.LossPct, true, 1, 5) }
+func (t *TCPLoss) Score() Score           { return TCPLossScore(t.s.LossPct, t.s.Total) }
 func (t *TCPLoss) DisplayValue() string {
-	return fmt.Sprintf("%.1f%%  (%d/%d)", t.s.LossPct, t.s.Fail, t.s.Total)
+	// loss% is timeout-only; the count shown is timeouts/attempts in the window.
+	return fmt.Sprintf("%.1f%%  (%d/%d)", t.s.LossPct, t.s.TimeoutCount, t.s.Total)
 }
 
 // FailureBreakdown returns a string showing the breakdown of failure types.

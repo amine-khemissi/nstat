@@ -100,7 +100,7 @@ func Status() {
 		name  string
 		value string
 		score dim.Score
-	}{"TCP loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.TCPLossPct, s.TCPFail, s.TCPTotal), dim.ScoreOf(s.TCPLossPct, true, 1, 5)})
+	}{"TCP loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.TCPLossPct, s.TCPTimeoutCount, s.TCPTotal), dim.TCPLossScore(s.TCPLossPct, s.TCPTotal)})
 
 	// TCP failure breakdown (always show)
 	tcpBreakdown := fmt.Sprintf("to:%d ref:%d rst:%d oth:%d",
@@ -214,7 +214,7 @@ func overallScore(s *state.State, outages1h int) dim.Score {
 	bump(dim.ScoreOf(s.RTTJitter, true, 10, 30))
 	bump(dim.ScoreOf(s.LossPct, true, 1, 5))
 	bump(dim.ScoreOf(s.TCPLastMs, s.TCPLastOK, 150, 150))
-	bump(dim.ScoreOf(s.TCPLossPct, true, 1, 5))
+	bump(dim.TCPLossScore(s.TCPLossPct, s.TCPTotal))
 	bump(dim.ScoreOf(s.DNSLastMs, s.DNSLastOK, 100, 500))
 	bump(dim.ScoreOf(s.DHCPLastMs, s.DHCPLastOK, 10, 50))
 	bump(dim.ScoreOf(float64(outages1h), true, 1, 3))

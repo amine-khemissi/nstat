@@ -56,6 +56,7 @@ type PingObserver interface {
 // TCPObserver is implemented by dimensions that react to TCP connect probes.
 type TCPObserver interface {
 	OnTCPResult(ok bool, ms float64)
+	OnTCPResultWithReason(ok bool, ms float64, reason TCPFailReason)
 }
 
 // DNSObserver is implemented by dimensions that react to DNS resolve probes.
