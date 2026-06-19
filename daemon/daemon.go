@@ -35,7 +35,7 @@ func Run(cfg *config.Config) {
 	ps := dim.NewPingStats(cfg.RTTWindow)
 	rtt := dim.NewRTT(ps)
 	jitter := dim.NewJitter(ps)
-	pl, lossStats := dim.NewPacketLoss()
+	pl, lossStats := dim.NewPacketLoss(cfg.RTTWindow)
 	tc, tcpStats := dim.NewTCPConnect(cfg.TCPHost, cfg.TCPPort)
 	tcpLoss := dim.NewTCPLoss(tcpStats)
 	dnsServer := detectDNS()
@@ -48,9 +48,15 @@ func Run(cfg *config.Config) {
 	outages := dim.NewOutages()
 
 	// Multi-target TCP tracking
-	tcpTargets := make([]struct{ Host string; Port int }, len(cfg.TCPTargets))
+	tcpTargets := make([]struct {
+		Host string
+		Port int
+	}, len(cfg.TCPTargets))
 	for i, t := range cfg.TCPTargets {
-		tcpTargets[i] = struct{ Host string; Port int }{t.Host, t.Port}
+		tcpTargets[i] = struct {
+			Host string
+			Port int
+		}{t.Host, t.Port}
 	}
 	tcpMulti := dim.NewTCPMulti(tcpTargets)
 
@@ -159,14 +165,14 @@ func Run(cfg *config.Config) {
 			ps = dim.NewPingStats(cfg.RTTWindow)
 			rtt = dim.NewRTT(ps)
 			jitter = dim.NewJitter(ps)
-			pl, lossStats = dim.NewPacketLoss()
+			pl, lossStats = dim.NewPacketLoss(cfg.RTTWindow)
 			pingObs = []dim.PingObserver{ps, lossStats}
 			dims[0], dims[1], dims[2] = rtt, jitter, pl
 			snap.SessionStart = time.Now().Unix()
 			snap.PingsTotal = 0
 			snap.LossTotal = 0
-			snap.TCPTotal = 0
-			snap.TCPFail = 0
+			snap.TCPLifeTotal = 0
+			snap.TCPLifeFail = 0
 			snap.OutageCount = 0
 			outages = dim.NewOutages()
 			dims[7] = outages
@@ -225,7 +231,9 @@ func Run(cfg *config.Config) {
 
 		snap.RTTAvg = ps.Avg
 		snap.RTTJitter = ps.Jitter
-		snap.LossPct = pl.Value()
+		snap.LossPct = pl.Value() // windowed
+		snap.LossWinLost = lossStats.Lost
+		snap.LossWinTotal = lossStats.Total
 
 		// CSV: ping-rate dimensions (every ping interval)
 		now := time.Now()
@@ -279,6 +287,13 @@ func doLANChecks(
 	for i, target := range cfg.TCPTargets {
 		tcpMs, reason, err := tcpCheckWithReason(target.Host, target.Port, 2*time.Second)
 		ok := err == nil
+
+		// Lifetime tallies for the session summary (windowed counts below are
+		// for the live health view).
+		snap.TCPLifeTotal++
+		if !ok {
+			snap.TCPLifeFail++
+		}
 
 		// Update multi-target tracker
 		tcpMulti.RecordResult(target.Host, target.Port, ok, tcpMs, reason)
@@ -423,15 +438,23 @@ func appendCSV(cfg *config.Config, d dim.Dimension, t time.Time) {
 	_ = store.Append(path, d.CSVFile()[:len(d.CSVFile())-4], t, d.Value())
 }
 
+// pct returns 100*part/total, guarding against a zero denominator.
+func pct(part, total int) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(part) / float64(total) * 100
+}
+
 func printSummary(logf func(string, ...any), snap *state.State, cfg *config.Config) {
 	elapsed := time.Since(time.Unix(snap.SessionStart, 0))
 	logf("── session summary ──────────────────────────────────")
 	logf("  duration    : %s", fmtDur(elapsed))
 	logf("  total pings : %d", snap.PingsTotal)
-	logf("  packet loss : %d/%d (%.1f%%)", snap.LossTotal, snap.PingsTotal, snap.LossPct)
+	logf("  packet loss : %d/%d (%.1f%%)", snap.LossTotal, snap.PingsTotal, pct(snap.LossTotal, snap.PingsTotal))
 	logf("  avg RTT     : %.1f ms", snap.RTTAvg)
 	logf("  jitter      : %.1f ms", snap.RTTJitter)
-	logf("  tcp checks  : %d/%d failed (%.1f%%)", snap.TCPFail, snap.TCPTotal, snap.TCPLossPct)
+	logf("  tcp checks  : %d/%d failed (%.1f%%)", snap.TCPLifeFail, snap.TCPLifeTotal, pct(snap.TCPLifeFail, snap.TCPLifeTotal))
 	logf("  outages     : %d", snap.OutageCount)
 }
 

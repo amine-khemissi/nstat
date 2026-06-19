@@ -67,7 +67,7 @@ func ReadTCPTuning() (*TCPTuning, error) {
 		KeepaliveTime:   7200, // Windows default
 		KeepaliveIntvl:  1,
 		KeepaliveProbes: 10,
-		FinTimeout:      120,  // Windows default (TcpTimedWaitDelay)
+		FinTimeout:      120, // Windows default (TcpTimedWaitDelay)
 	}
 	// Could read from registry, but defaults are reasonable
 	return t, nil

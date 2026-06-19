@@ -82,33 +82,59 @@ func (j *Jitter) DisplayValue() string   { return FmtMs(j.ps.Jitter) }
 
 // --- PacketLoss dimension ---------------------------------------------------
 
+const defaultLossWindow = 60
+
+// LossStats measures ICMP packet loss over a sliding window of recent pings, so
+// the figure reflects current conditions and recovers as old drops age out
+// (rather than being a lifetime cumulative average).
 type LossStats struct {
-	Total   int
-	Lost    int
-	LossPct float64
+	window []bool // ring buffer; true == lost
+	pos    int
+	filled bool
+	size   int
+
+	Total   int     // pings in the window
+	Lost    int     // dropped pings in the window
+	LossPct float64 // windowed loss %
 }
 
 type PacketLoss struct{ s *LossStats }
 
-func NewPacketLoss() (*PacketLoss, *LossStats) {
-	s := &LossStats{}
+func NewPacketLoss(windowSize int) (*PacketLoss, *LossStats) {
+	if windowSize <= 0 {
+		windowSize = defaultLossWindow
+	}
+	s := &LossStats{size: windowSize}
 	return &PacketLoss{s: s}, s
 }
 
-func (s *LossStats) OnPingSuccess(_ float64) {
-	s.Total++
-	s.updatePct()
-}
+func (s *LossStats) OnPingSuccess(_ float64) { s.record(false) }
+func (s *LossStats) OnPingFailure()          { s.record(true) }
 
-func (s *LossStats) OnPingFailure() {
-	s.Total++
-	s.Lost++
-	s.updatePct()
-}
-
-func (s *LossStats) updatePct() {
-	if s.Total > 0 {
-		s.LossPct = float64(s.Lost) / float64(s.Total) * 100
+func (s *LossStats) record(lost bool) {
+	if len(s.window) == 0 {
+		s.window = make([]bool, s.size)
+	}
+	s.window[s.pos] = lost
+	s.pos = (s.pos + 1) % s.size
+	if s.pos == 0 {
+		s.filled = true
+	}
+	n := s.pos
+	if s.filled {
+		n = s.size
+	}
+	lostCount := 0
+	for i := 0; i < n; i++ {
+		if s.window[i] {
+			lostCount++
+		}
+	}
+	s.Total, s.Lost = n, lostCount
+	if n > 0 {
+		s.LossPct = float64(lostCount) / float64(n) * 100
+	} else {
+		s.LossPct = 0
 	}
 }
 
@@ -119,7 +145,7 @@ func (pl *PacketLoss) Value() float64         { return pl.s.LossPct }
 func (pl *PacketLoss) IsOK() bool             { return true }
 func (pl *PacketLoss) WarnThreshold() float64 { return 1 }
 func (pl *PacketLoss) CritThreshold() float64 { return 5 }
-func (pl *PacketLoss) Score() Score           { return ScoreOf(pl.s.LossPct, true, 1, 5) }
+func (pl *PacketLoss) Score() Score           { return LossScore(pl.s.LossPct, pl.s.Total) }
 func (pl *PacketLoss) DisplayValue() string {
 	return fmt.Sprintf("%.1f%%  (%d/%d)", pl.s.LossPct, pl.s.Lost, pl.s.Total)
 }

@@ -5,14 +5,14 @@ import "fmt"
 // KernelTCPStats tracks TCP statistics from /proc/net/snmp (Linux only).
 type KernelTCPStats struct {
 	// Current values
-	RetransSegs   int64 // segments retransmitted
-	OutSegs       int64 // total segments sent
-	InSegs        int64 // total segments received
-	InErrs        int64 // segments received with errors
-	OutRsts       int64 // RST segments sent
-	AttemptFails  int64 // failed connection attempts
-	EstabResets   int64 // connections reset while established
-	CurrEstab     int64 // currently established connections
+	RetransSegs  int64 // segments retransmitted
+	OutSegs      int64 // total segments sent
+	InSegs       int64 // total segments received
+	InErrs       int64 // segments received with errors
+	OutRsts      int64 // RST segments sent
+	AttemptFails int64 // failed connection attempts
+	EstabResets  int64 // connections reset while established
+	CurrEstab    int64 // currently established connections
 
 	// Previous values (for calculating deltas)
 	prevRetransSegs  int64
@@ -23,12 +23,12 @@ type KernelTCPStats struct {
 	prevEstabResets  int64
 
 	// Deltas (changes since last check)
-	DeltaRetrans     int64
-	DeltaOutSegs     int64
-	DeltaInErrs      int64
-	DeltaOutRsts     int64
+	DeltaRetrans      int64
+	DeltaOutSegs      int64
+	DeltaInErrs       int64
+	DeltaOutRsts      int64
 	DeltaAttemptFails int64
-	DeltaEstabResets int64
+	DeltaEstabResets  int64
 
 	// Calculated metrics
 	RetransPct float64 // retransmit percentage
@@ -115,11 +115,11 @@ func NewTCPErrors(k *KernelTCPStats) *TCPErrors {
 	return &TCPErrors{k: k}
 }
 
-func (t *TCPErrors) Name() string    { return "TCP errors" }
-func (t *TCPErrors) CSVFile() string { return "csv_tcp_errors.csv" }
-func (t *TCPErrors) Unit() string    { return "count" }
-func (t *TCPErrors) Value() float64  { return float64(t.k.DeltaInErrs + t.k.DeltaEstabResets) }
-func (t *TCPErrors) IsOK() bool      { return t.k.DeltaInErrs == 0 && t.k.DeltaEstabResets == 0 }
+func (t *TCPErrors) Name() string           { return "TCP errors" }
+func (t *TCPErrors) CSVFile() string        { return "csv_tcp_errors.csv" }
+func (t *TCPErrors) Unit() string           { return "count" }
+func (t *TCPErrors) Value() float64         { return float64(t.k.DeltaInErrs + t.k.DeltaEstabResets) }
+func (t *TCPErrors) IsOK() bool             { return t.k.DeltaInErrs == 0 && t.k.DeltaEstabResets == 0 }
 func (t *TCPErrors) WarnThreshold() float64 { return 1 }
 func (t *TCPErrors) CritThreshold() float64 { return 10 }
 

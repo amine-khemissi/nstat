@@ -36,9 +36,19 @@ func (r TCPFailReason) String() string {
 // daemon session — loss recovers as old failures age out instead of being a
 // permanent lifetime average.
 const (
-	defaultTCPWindow  = 50
-	minTCPLossSamples = 25 // hold at Good below this many samples (avoids spikes)
+	defaultTCPWindow = 50
+	minLossSamples   = 25 // hold at Good below this many samples (avoids spikes)
 )
+
+// LossScore scores a windowed loss percentage (TCP or ICMP), holding at Good
+// until the window has enough samples so a single early failure in a small
+// window can't spike to CRIT. Shared by the TCP-loss and packet-loss dimensions.
+func LossScore(lossPct float64, total int) Score {
+	if total < minLossSamples {
+		return Good
+	}
+	return ScoreOf(lossPct, true, 1, 5)
+}
 
 // TCPStats holds the shared state for the TCPConnect and TCPLoss dimensions.
 //
@@ -133,15 +143,6 @@ func (s *TCPStats) recompute() {
 	}
 }
 
-// TCPLossScore scores a windowed TCP loss percentage, holding at Good until the
-// window has enough samples so a single early timeout can't spike to CRIT.
-func TCPLossScore(lossPct float64, total int) Score {
-	if total < minTCPLossSamples {
-		return Good
-	}
-	return ScoreOf(lossPct, true, 1, 5)
-}
-
 // --- TCPConnect dimension ---------------------------------------------------
 
 type TCPConnect struct {
@@ -178,7 +179,7 @@ func (t *TCPLoss) Value() float64         { return t.s.LossPct }
 func (t *TCPLoss) IsOK() bool             { return true }
 func (t *TCPLoss) WarnThreshold() float64 { return 1 }
 func (t *TCPLoss) CritThreshold() float64 { return 5 }
-func (t *TCPLoss) Score() Score           { return TCPLossScore(t.s.LossPct, t.s.Total) }
+func (t *TCPLoss) Score() Score           { return LossScore(t.s.LossPct, t.s.Total) }
 func (t *TCPLoss) DisplayValue() string {
 	// loss% is timeout-only; the count shown is timeouts/attempts in the window.
 	return fmt.Sprintf("%.1f%%  (%d/%d)", t.s.LossPct, t.s.TimeoutCount, t.s.Total)
@@ -205,7 +206,10 @@ type TCPMulti struct {
 	Targets []*TCPTarget
 }
 
-func NewTCPMulti(targets []struct{ Host string; Port int }) *TCPMulti {
+func NewTCPMulti(targets []struct {
+	Host string
+	Port int
+}) *TCPMulti {
 	m := &TCPMulti{}
 	for _, t := range targets {
 		m.Targets = append(m.Targets, &TCPTarget{

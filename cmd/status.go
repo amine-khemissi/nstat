@@ -66,7 +66,7 @@ func Status() {
 	}{
 		{"RTT (avg)", fmt.Sprintf("%.1f ms", s.RTTAvg), dim.ScoreOf(s.RTTAvg, true, 80, 200)},
 		{"Jitter", fmt.Sprintf("%.1f ms", s.RTTJitter), dim.ScoreOf(s.RTTJitter, true, 10, 30)},
-		{"Packet loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.LossPct, s.LossTotal, s.PingsTotal), dim.ScoreOf(s.LossPct, true, 1, 5)},
+		{"Packet loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.LossPct, s.LossWinLost, s.LossWinTotal), dim.LossScore(s.LossPct, s.LossWinTotal)},
 	}
 
 	// Add all TCP targets
@@ -100,7 +100,7 @@ func Status() {
 		name  string
 		value string
 		score dim.Score
-	}{"TCP loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.TCPLossPct, s.TCPTimeoutCount, s.TCPTotal), dim.TCPLossScore(s.TCPLossPct, s.TCPTotal)})
+	}{"TCP loss", fmt.Sprintf("%.1f%%  (%d/%d)", s.TCPLossPct, s.TCPTimeoutCount, s.TCPTotal), dim.LossScore(s.TCPLossPct, s.TCPTotal)})
 
 	// TCP failure breakdown (always show)
 	tcpBreakdown := fmt.Sprintf("to:%d ref:%d rst:%d oth:%d",
@@ -212,9 +212,9 @@ func overallScore(s *state.State, outages1h int) dim.Score {
 	}
 	bump(dim.ScoreOf(s.RTTAvg, true, 80, 200))
 	bump(dim.ScoreOf(s.RTTJitter, true, 10, 30))
-	bump(dim.ScoreOf(s.LossPct, true, 1, 5))
+	bump(dim.LossScore(s.LossPct, s.LossWinTotal))
 	bump(dim.ScoreOf(s.TCPLastMs, s.TCPLastOK, 150, 150))
-	bump(dim.TCPLossScore(s.TCPLossPct, s.TCPTotal))
+	bump(dim.LossScore(s.TCPLossPct, s.TCPTotal))
 	bump(dim.ScoreOf(s.DNSLastMs, s.DNSLastOK, 100, 500))
 	bump(dim.ScoreOf(s.DHCPLastMs, s.DHCPLastOK, 10, 50))
 	bump(dim.ScoreOf(float64(outages1h), true, 1, 3))

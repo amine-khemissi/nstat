@@ -8,38 +8,42 @@ import (
 
 // TCPTargetState holds per-target TCP statistics.
 type TCPTargetState struct {
-	Host         string `json:"host"`
-	Port         int    `json:"port"`
+	Host         string  `json:"host"`
+	Port         int     `json:"port"`
 	LastMs       float64 `json:"last_ms"`
-	LastOK       bool   `json:"last_ok"`
-	LastReason   string `json:"last_reason"` // timeout, refused, reset, dns, other
-	Total        int    `json:"total"`
-	Fail         int    `json:"fail"`
+	LastOK       bool    `json:"last_ok"`
+	LastReason   string  `json:"last_reason"` // timeout, refused, reset, dns, other
+	Total        int     `json:"total"`
+	Fail         int     `json:"fail"`
 	LossPct      float64 `json:"loss_pct"`
-	TimeoutCount int    `json:"timeout_count"`
-	RefusedCount int    `json:"refused_count"`
-	ResetCount   int    `json:"reset_count"`
-	OtherCount   int    `json:"other_count"`
+	TimeoutCount int     `json:"timeout_count"`
+	RefusedCount int     `json:"refused_count"`
+	ResetCount   int     `json:"reset_count"`
+	OtherCount   int     `json:"other_count"`
 }
 
 type State struct {
-	Timestamp    string  `json:"timestamp"`
-	Epoch        int64   `json:"epoch"`
-	PingInterval int     `json:"ping_interval"`
-	LANInterval  int     `json:"lan_interval"`
-	RTTWindow    int     `json:"rtt_window"`
-	RTTCurrent   float64 `json:"rtt_current"`
-	RTTAvg       float64 `json:"rtt_avg"`
-	RTTJitter    float64 `json:"rtt_jitter"`
-	LossTotal    int     `json:"loss_total"`
-	PingsTotal   int     `json:"pings_total"`
-	LossPct      float64 `json:"loss_pct"`
-	TCPLastMs    float64 `json:"tcp_last_ms"`
-	TCPLastOK    bool    `json:"tcp_last_ok"`
-	TCPTotal     int     `json:"tcp_total"`
-	TCPFail      int     `json:"tcp_fail"`
-	TCPLossPct   float64 `json:"tcp_loss_pct"`
-	TCPLastReason string `json:"tcp_last_reason,omitempty"` // failure reason for primary target
+	Timestamp     string  `json:"timestamp"`
+	Epoch         int64   `json:"epoch"`
+	PingInterval  int     `json:"ping_interval"`
+	LANInterval   int     `json:"lan_interval"`
+	RTTWindow     int     `json:"rtt_window"`
+	RTTCurrent    float64 `json:"rtt_current"`
+	RTTAvg        float64 `json:"rtt_avg"`
+	RTTJitter     float64 `json:"rtt_jitter"`
+	LossTotal     int     `json:"loss_total"`               // lifetime dropped pings (session summary)
+	PingsTotal    int     `json:"pings_total"`              // lifetime pings sent (session summary)
+	LossPct       float64 `json:"loss_pct"`                 // windowed loss % (health)
+	LossWinLost   int     `json:"loss_win_lost,omitempty"`  // dropped pings in window
+	LossWinTotal  int     `json:"loss_win_total,omitempty"` // pings in window
+	TCPLastMs     float64 `json:"tcp_last_ms"`
+	TCPLastOK     bool    `json:"tcp_last_ok"`
+	TCPTotal      int     `json:"tcp_total"`                 // attempts in window (health)
+	TCPFail       int     `json:"tcp_fail"`                  // failures in window (health)
+	TCPLossPct    float64 `json:"tcp_loss_pct"`              // windowed timeout-loss % (health)
+	TCPLifeTotal  int     `json:"tcp_life_total,omitempty"`  // lifetime attempts (session summary)
+	TCPLifeFail   int     `json:"tcp_life_fail,omitempty"`   // lifetime failures (session summary)
+	TCPLastReason string  `json:"tcp_last_reason,omitempty"` // failure reason for primary target
 
 	// Per-target TCP stats (multiple targets for granularity)
 	TCPTargets []TCPTargetState `json:"tcp_targets,omitempty"`
@@ -51,18 +55,18 @@ type State struct {
 	TCPOtherCount   int `json:"tcp_other_count"`
 
 	// MTU probe results
-	MTUDetected   int     `json:"mtu_detected,omitempty"`
-	MTULastMs     float64 `json:"mtu_last_ms,omitempty"`
-	MTUHasIssues  bool    `json:"mtu_has_issues,omitempty"`
-	MTUFailedSizes []int  `json:"mtu_failed_sizes,omitempty"`
+	MTUDetected    int     `json:"mtu_detected,omitempty"`
+	MTULastMs      float64 `json:"mtu_last_ms,omitempty"`
+	MTUHasIssues   bool    `json:"mtu_has_issues,omitempty"`
+	MTUFailedSizes []int   `json:"mtu_failed_sizes,omitempty"`
 
 	// Kernel TCP stats
-	KernelRetransPct    float64 `json:"kernel_retrans_pct,omitempty"`
-	KernelDeltaRetrans  int64   `json:"kernel_delta_retrans,omitempty"`
-	KernelDeltaOutSegs  int64   `json:"kernel_delta_out_segs,omitempty"`
-	KernelDeltaInErrs   int64   `json:"kernel_delta_in_errs,omitempty"`
-	KernelDeltaResets   int64   `json:"kernel_delta_resets,omitempty"`
-	KernelCurrEstab     int64   `json:"kernel_curr_estab,omitempty"`
+	KernelRetransPct   float64 `json:"kernel_retrans_pct,omitempty"`
+	KernelDeltaRetrans int64   `json:"kernel_delta_retrans,omitempty"`
+	KernelDeltaOutSegs int64   `json:"kernel_delta_out_segs,omitempty"`
+	KernelDeltaInErrs  int64   `json:"kernel_delta_in_errs,omitempty"`
+	KernelDeltaResets  int64   `json:"kernel_delta_resets,omitempty"`
+	KernelCurrEstab    int64   `json:"kernel_curr_estab,omitempty"`
 
 	// TCP tuning (sysctl values)
 	TCPSynRetries      int  `json:"tcp_syn_retries,omitempty"`

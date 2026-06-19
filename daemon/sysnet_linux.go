@@ -68,12 +68,12 @@ func hexToIPv4LE(s string) (string, error) {
 
 // TCPTuning holds the kernel TCP timeout configuration.
 type TCPTuning struct {
-	SynRetries    int
-	Retries2      int
-	KeepaliveTime int // seconds
-	KeepaliveIntvl int
+	SynRetries      int
+	Retries2        int
+	KeepaliveTime   int // seconds
+	KeepaliveIntvl  int
 	KeepaliveProbes int
-	FinTimeout    int
+	FinTimeout      int
 }
 
 // ReadTCPTuning reads TCP timeout settings from sysctl.

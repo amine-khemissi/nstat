@@ -60,16 +60,16 @@ func TestWindowAgesOutFailures(t *testing.T) {
 func TestMinSampleFloor(t *testing.T) {
 	// A single timeout in a tiny window is a high percentage, but below the
 	// minimum sample count it must not score worse than Good.
-	if got := TCPLossScore(100, 1); got != Good {
+	if got := LossScore(100, 1); got != Good {
 		t.Errorf("score(100%%, 1 sample) = %v, want Good", got)
 	}
-	if got := TCPLossScore(0, minTCPLossSamples); got != Good {
-		t.Errorf("score(0%%, %d) = %v, want Good", minTCPLossSamples, got)
+	if got := LossScore(0, minLossSamples); got != Good {
+		t.Errorf("score(0%%, %d) = %v, want Good", minLossSamples, got)
 	}
-	if got := TCPLossScore(6, minTCPLossSamples); got != Crit {
-		t.Errorf("score(6%%, %d) = %v, want Crit", minTCPLossSamples, got)
+	if got := LossScore(6, minLossSamples); got != Crit {
+		t.Errorf("score(6%%, %d) = %v, want Crit", minLossSamples, got)
 	}
-	if got := TCPLossScore(2, minTCPLossSamples); got != Warn {
-		t.Errorf("score(2%%, %d) = %v, want Warn", minTCPLossSamples, got)
+	if got := LossScore(2, minLossSamples); got != Warn {
+		t.Errorf("score(2%%, %d) = %v, want Warn", minLossSamples, got)
 	}
 }
