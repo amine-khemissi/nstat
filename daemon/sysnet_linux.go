@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // defaultIface returns the interface carrying the default route, or "".
@@ -25,14 +27,29 @@ func defaultIface() string {
 	return ""
 }
 
-// readDHCPLease reads the current DHCP lease for the default-route interface via
-// NetworkManager (nmcli). Returns avail=false if NM isn't present or has no
-// lease, so callers degrade gracefully rather than alarming.
+// readDHCPLease reads the current DHCP lease for the default-route interface,
+// trying NetworkManager (nmcli), then systemd-networkd, then ISC dhclient lease
+// files. Returns avail=false if none yield a lease, so callers degrade
+// gracefully ("n/a") rather than alarming.
 func readDHCPLease() (server string, expiry, leaseTime int64, avail bool) {
 	iface := defaultIface()
 	if iface == "" {
 		return "", 0, 0, false
 	}
+	for _, src := range []func(string) (string, int64, int64, bool){
+		leaseFromNMCLI,
+		leaseFromNetworkd,
+		leaseFromDhclient,
+	} {
+		if s, e, l, ok := src(iface); ok {
+			return s, e, l, true
+		}
+	}
+	return "", 0, 0, false
+}
+
+// leaseFromNMCLI reads the lease from NetworkManager via nmcli.
+func leaseFromNMCLI(iface string) (server string, expiry, leaseTime int64, ok bool) {
 	out, err := exec.Command("nmcli", "-t", "-f", "DHCP4.OPTION", "device", "show", iface).Output()
 	if err != nil {
 		return "", 0, 0, false
@@ -60,6 +77,130 @@ func readDHCPLease() (server string, expiry, leaseTime int64, avail bool) {
 		}
 	}
 	return server, expiry, leaseTime, expiry > 0
+}
+
+// leaseFromNetworkd reads the systemd-networkd lease from
+// /run/systemd/netif/leases/<ifindex>. That file carries no absolute expiry, so
+// it is approximated from the file's mtime (rewritten on each renewal) + LIFETIME.
+func leaseFromNetworkd(iface string) (server string, expiry, leaseTime int64, ok bool) {
+	idx, err := os.ReadFile("/sys/class/net/" + iface + "/ifindex")
+	if err != nil {
+		return "", 0, 0, false
+	}
+	path := "/run/systemd/netif/leases/" + strings.TrimSpace(string(idx))
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", 0, 0, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", 0, 0, false
+	}
+	return parseNetworkdLease(string(data), fi.ModTime())
+}
+
+// parseNetworkdLease parses a systemd-networkd lease file (KEY=VALUE lines).
+func parseNetworkdLease(content string, mtime time.Time) (server string, expiry, leaseTime int64, ok bool) {
+	sc := bufio.NewScanner(strings.NewReader(content))
+	for sc.Scan() {
+		kv := strings.SplitN(sc.Text(), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key, val := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
+		switch key {
+		case "SERVER_ADDRESS":
+			server = val
+		case "LIFETIME":
+			leaseTime, _ = strconv.ParseInt(val, 10, 64)
+		}
+	}
+	if leaseTime <= 0 {
+		return "", 0, 0, false
+	}
+	return server, mtime.Unix() + leaseTime, leaseTime, true
+}
+
+// leaseFromDhclient scans common ISC dhclient lease files and returns the most
+// recent lease for the interface.
+func leaseFromDhclient(iface string) (server string, expiry, leaseTime int64, ok bool) {
+	patterns := []string{
+		"/var/lib/dhcp/dhclient*.leases",
+		"/var/lib/dhclient/dhclient*.leases",
+		"/var/lib/NetworkManager/dhclient-*.lease",
+	}
+	for _, p := range patterns {
+		files, _ := filepath.Glob(p)
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			if s, e, l, found := parseDhclientLeases(string(data), iface); found && e > expiry {
+				server, expiry, leaseTime, ok = s, e, l, true
+			}
+		}
+	}
+	return server, expiry, leaseTime, ok
+}
+
+// parseDhclientLeases parses ISC dhclient `lease { ... }` blocks and returns the
+// matching lease with the latest expiry. A block with no interface line still
+// matches (single-interface lease files omit it).
+func parseDhclientLeases(content, iface string) (server string, expiry, leaseTime int64, ok bool) {
+	sc := bufio.NewScanner(strings.NewReader(content))
+	var bIface, bServer string
+	var bExpiry, bLease int64
+	inBlock := false
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		switch {
+		case strings.HasPrefix(line, "lease {"):
+			inBlock = true
+			bIface, bServer, bExpiry, bLease = "", "", 0, 0
+		case inBlock && line == "}":
+			inBlock = false
+			if (bIface == "" || bIface == iface) && bExpiry > 0 && bExpiry > expiry {
+				server, expiry, leaseTime, ok = bServer, bExpiry, bLease, true
+			}
+		case inBlock:
+			parseDhclientField(line, &bIface, &bServer, &bExpiry, &bLease)
+		}
+	}
+	return server, expiry, leaseTime, ok
+}
+
+func parseDhclientField(line string, iface, server *string, expiry, lease *int64) {
+	switch {
+	case strings.HasPrefix(line, "interface "):
+		*iface = trimDhclientVal(line[len("interface "):])
+	case strings.HasPrefix(line, "option dhcp-server-identifier "):
+		*server = trimDhclientVal(line[len("option dhcp-server-identifier "):])
+	case strings.HasPrefix(line, "option dhcp-lease-time "):
+		*lease, _ = strconv.ParseInt(trimDhclientVal(line[len("option dhcp-lease-time "):]), 10, 64)
+	case strings.HasPrefix(line, "expire "):
+		*expiry = parseDhclientTime(line[len("expire "):])
+	}
+}
+
+func trimDhclientVal(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimRight(s, ";")
+	return strings.Trim(s, "\"")
+}
+
+// parseDhclientTime parses a dhclient `expire`/`renew` value of the form
+// `<weekday> 2026/06/20 12:30:19;` (UTC).
+func parseDhclientTime(s string) int64 {
+	fields := strings.Fields(strings.TrimRight(strings.TrimSpace(s), ";"))
+	if len(fields) < 3 {
+		return 0
+	}
+	t, err := time.ParseInLocation("2006/01/02 15:04:05", fields[1]+" "+fields[2], time.UTC)
+	if err != nil {
+		return 0
+	}
+	return t.Unix()
 }
 
 func detectDNS() string {

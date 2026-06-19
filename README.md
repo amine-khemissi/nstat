@@ -8,12 +8,31 @@ A lightweight network connection reliability monitor that runs as a background d
 |---|---|---|
 | RTT (avg) | Rolling ICMP round-trip time to 8.8.8.8 | < 80 ms / 80–200 ms / > 200 ms |
 | Jitter | Standard deviation of RTT (same window) | < 10 ms / 10–30 ms / > 30 ms |
-| Packet loss | % of ICMP pings that got no reply | < 1% / 1–5% / > 5% |
+| Packet loss | % of recent ICMP pings with no reply (sliding window) | < 1% / 1–5% / > 5% |
 | TCP connect | Time for TCP handshake to 8.8.8.8:53 | < 150 ms / — / failed |
-| TCP loss | % of TCP connection attempts that failed | < 1% / 1–5% / > 5% |
-| DNS | Resolution time for google.com via your DNS server | < 100 ms / 100–500 ms / failed |
-| DHCP (gateway) | ICMP ping to your default gateway (LAN health) | < 10 ms / 10–50 ms / failed |
+| TCP loss | % of recent TCP attempts that **timed out** — refused/reset excluded (sliding window) | < 1% / 1–5% / > 5% |
+| MTU | Path MTU to 8.8.8.8, probed with the Don't-Fragment bit | ≥ 1400 / < 1400 / < 1200 |
+| DNS | Resolution time via your DNS server (auto re-detected) | < 100 ms / 100–500 ms / failed |
+| Gateway | ICMP ping to your default gateway, auto re-detected (LAN health) | < 10 ms / 10–50 ms / failed |
+| DHCP lease | Time left on the current DHCP lease (server + expiry read from the system) | > 10% left / < 10% left / expired |
 | Outages/1h | Distinct outage events (≥ 3 consecutive losses) in the last hour | 0 / 1–2 / ≥ 3 |
+
+Notes:
+- **Loss metrics are windowed.** Packet loss and TCP loss are measured over a
+  sliding window of recent samples (not a lifetime average), so they reflect
+  current conditions and recover as old failures age out. They stay **GOOD**
+  until the window has enough samples, so one early blip can't spike to CRIT.
+  TCP loss counts only **timeouts** (genuine unreachability); a refused/reset
+  means the path worked and is shown in the TCP breakdown instead.
+- **DNS / Gateway targets are re-detected** every LAN cycle, so the daemon
+  follows the laptop onto new networks instead of probing the old one's
+  servers.
+- **DHCP lease** is a real lease check, not a ping: it reads the DHCP server
+  identifier and expiry from the system DHCP client — NetworkManager (`nmcli`),
+  then systemd-networkd, then ISC dhclient lease files. The value is the time
+  **remaining** until the lease expires; a healthy client renews around the
+  halfway mark, so a value that keeps counting down toward zero means renewal
+  is failing. If no lease source is found it shows `n/a` (not an error).
 
 ## Installation
 
